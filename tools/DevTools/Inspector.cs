@@ -18,8 +18,9 @@ namespace DevTools;
 /// </summary>
 internal static class Inspector
 {
-    // Group the tier list overlay mod puts its badges into.
+    // Groups the tier list overlay mod puts its badges and hover tips into.
     private const string BadgeGroup = "tierlist_badge";
+    private const string TipGroup = "tierlist_tip";
 
     public static Dictionary<string, object?> Inspect()
     {
@@ -73,11 +74,21 @@ internal static class Inspector
             {
                 ["item_id"] = badge.GetMeta("item_id", "").AsString(),
                 ["tier"] = badge.GetMeta("tier", "").AsString(),
+                ["label"] = badge.GetMeta("label", "").AsString(),
                 ["visible"] = badge.IsVisibleInTree(),
                 ["rect"] = rect,
                 ["on_screen"] = OnScreen(rect),
                 ["context"] = Context(badge),
             };
+        }).ToList();
+
+        var tierTips = tree.GetNodesInGroup(TipGroup).OfType<Control>().Select(tip => new Dictionary<string, object?>
+        {
+            ["item_id"] = tip.GetMeta("item_id", "").AsString(),
+            ["visible"] = tip.IsVisibleInTree(),
+            ["rect"] = Rect(tip, toWindow),
+            ["title"] = (tip.FindChild("Title", true, false) as Label)?.Text,
+            ["text"] = (tip.FindChild("Description", true, false) as RichTextLabel)?.GetParsedText(),
         }).ToList();
 
         var windowSize = DisplayServer.WindowGetSize();
@@ -91,6 +102,7 @@ internal static class Inspector
             ["potions"] = potions,
             ["badges"] = badges,
             ["hover_tips"] = hoverTips,
+            ["tier_tips"] = tierTips,
         };
     }
 

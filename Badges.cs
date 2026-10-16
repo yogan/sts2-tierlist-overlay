@@ -21,19 +21,29 @@ internal enum Placement
 /// </summary>
 internal static class Badges
 {
-    private const string BadgeName = "TierListOverlayBadge";
+    public const string BadgeName = "TierListOverlayBadge";
     private const string BadgeGroup = "tierlist_badge";
+
+    /// <summary>Letter tiers read as "A-Tier"; named tiers ("Always Amazing") stand on their own.</summary>
+    public static string TierLabel(string tier) => tier.Length <= 2 ? $"{tier}-Tier" : tier;
+
+    // Cards get "A-Tier", the smaller relics and potions just "A". On the upgrade screen a
+    // card worth upgrading gets a "+", as the game marks upgraded cards ("Bully+").
+    private static string Label(TierEntry entry, Placement placement, bool upgrading) =>
+        placement != Placement.InsideBottom ? entry.Tier
+        : TierLabel(entry.Tier) + (upgrading && entry.GoodUpgrade ? " +" : "");
 
     /// <summary>
     /// Makes the item's badge match `rated`: none when null, otherwise one showing its tier.
     /// `bounds` is the item's visible rectangle in the item node's own coordinates.
     /// </summary>
-    public static void Sync(Control item, (string Id, TierEntry Entry)? rated, Rect2 bounds, Placement placement)
+    public static void Sync(Control item, (string Id, TierEntry Entry)? rated, Rect2 bounds, Placement placement, bool upgrading = false)
     {
         var existing = item.GetNodeOrNull<Control>(BadgeName);
         if (existing != null)
         {
-            if (rated is var (id, entry) && existing.GetMeta("item_id", "").AsString() == id && existing.GetMeta("tier", "").AsString() == entry.Tier)
+            if (rated is var (id, entry) && existing.GetMeta("item_id", "").AsString() == id && existing.GetMeta("tier", "").AsString() == entry.Tier
+                && existing.GetMeta("label", "").AsString() == Label(entry, placement, upgrading))
             {
                 Place(item, existing, bounds, placement);
                 return;
@@ -44,14 +54,14 @@ internal static class Badges
         if (rated is var (newId, newEntry))
         {
             GD.Print($"[TierListOverlay] {newId}: {newEntry.Tier} — {newEntry.Commentary}");
-            var badge = Create(newId, newEntry, placement);
+            var badge = Create(newId, newEntry, Label(newEntry, placement, upgrading));
             // No ZIndex: the badge must stay in the item's own draw order so hover tips cover it.
             item.AddChild(badge);
             Place(item, badge, bounds, placement);
         }
     }
 
-    private static Control Create(string itemId, TierEntry entry, Placement placement)
+    private static Control Create(string itemId, TierEntry entry, string text)
     {
         var style = new StyleBoxFlat
         {
@@ -68,10 +78,8 @@ internal static class Badges
         badge.AddToGroup(BadgeGroup);
         badge.SetMeta("item_id", itemId);
         badge.SetMeta("tier", entry.Tier);
+        badge.SetMeta("label", text);
 
-        // Letter tiers read as "A-Tier" on cards and as plain "A" on the smaller relics and
-        // potions; named tiers ("Always Amazing") stand on their own.
-        var text = entry.Tier.Length <= 2 && placement == Placement.InsideBottom ? $"{entry.Tier}-Tier" : entry.Tier;
         var label = new Label { Text = text, MouseFilter = Control.MouseFilterEnum.Ignore, HorizontalAlignment = HorizontalAlignment.Center };
         label.AddThemeFontSizeOverride("font_size", 22);
         label.AddThemeColorOverride("font_color", Colors.White);

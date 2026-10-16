@@ -154,6 +154,17 @@ def enter_combat():
 
 # --- Expectations -------------------------------------------------------------------------
 
+@dataclass
+class Entry:
+    tier: str
+    color: str
+    commentary: str
+    good_upgrade: bool
+
+    def __getitem__(self, i):  # (tier, color), as the checks unpack it
+        return (self.tier, self.color)[i]
+
+
 class TierLists:
     """The mod's cached tier lists, looked up as the mod does: the current
     character's list wins over the colorless list (lists rate colorless cards per character)."""
@@ -168,7 +179,8 @@ class TierLists:
             for tier in json.loads(path.read_text())["tier_list"]["tiers"]:
                 for group in ("cards", "relics", "potions"):
                     for item in tier.get(group) or []:
-                        entries[item["item_id"]] = (tier["name"], tier.get("color", "#808080"))
+                        entries[item["item_id"]] = Entry(tier["name"], tier.get("color", "#808080"),
+                                                         (item.get("commentary") or "").strip(), bool(item.get("good_upgrade")))
             self.lists[path.stem] = entries
         self.character = None
 
@@ -232,6 +244,37 @@ def check_badges(result, view, tiers, kind, context_type, types=None):
             result.fail(f"{item['id']}: badge shows {near[0]['item_id']}/{near[0]['tier']}, expected {expected[0]}")
         else:
             result.note(f"{item['id']}: {expected[0]} ✓")
+
+
+def tier_label(tier):
+    return f"{tier}-Tier" if len(tier) <= 2 else tier
+
+
+def check_tip(result, tiers, item, shot_name=None):
+    """Hovering a rated item shows the author's tip with its tier and commentary."""
+    expected = tiers.get(item["id"])
+    if expected is None:
+        return
+    hover(*centre(item["rect"]))
+    time.sleep(1.0)
+    view = inspect()
+    if shot_name:
+        result.screenshots.append(screenshot(shot_name))
+    tips = [t for t in view["tier_tips"] if t["visible"] and t["item_id"] == item["id"]]
+    if len(tips) != 1:
+        result.fail(f"{item['id']}: {len(tips)} tier tips while hovered (expected 1)")
+        return
+    text = tips[0]["text"] or ""
+    if tier_label(expected.tier) not in text:
+        result.fail(f"{item['id']}: tip lacks tier {tier_label(expected.tier)!r}: {text[:80]!r}")
+    elif " ".join(expected.commentary.split())[:40] not in " ".join(text.split()):
+        result.fail(f"{item['id']}: tip lacks commentary {expected.commentary[:40]!r}: {text[:80]!r}")
+    elif not any(overlaps(tips[0]["rect"], t["rect"]) for t in view["hover_tips"]):
+        result.fail(f"{item['id']}: tip is not part of the game's hover tips")
+    elif not fully_inside(tips[0]["rect"], view["window"]):
+        result.fail(f"{item['id']}: tip runs off screen at {[round(v) for v in tips[0]['rect']]}")
+    else:
+        result.note(f"{item['id']}: tip ✓")
 
 
 def check_tooltip_layering(result, view, tiers, shot):
@@ -332,8 +375,7 @@ def scenario_card_reward(result, tiers):
     check_badges(result, view, tiers, "cards", "NCardRewardSelectionScreen")
     cards = [c for c in view["cards"] if c["on_screen"] and in_context(c, "NCardRewardSelectionScreen")]
     for n, card in enumerate(cards):
-        hover(*centre(card["rect"]))
-        time.sleep(1.0)
+        check_tip(result, tiers, card)
         shot = screenshot(f"card_reward_hover{n}")
         result.screenshots.append(shot)
         check_tooltip_layering(result, inspect(), tiers, shot)
@@ -382,6 +424,10 @@ def scenario_shop(result, tiers):
     view, shot = open_shop("shop")
     result.screenshots.append(shot)
     check_badges(result, view, tiers, "cards", "NMerchantInventory")
+    cards = [c for c in view["cards"] if in_context(c, "NMerchantInventory") and tiers.get(c["id"])]
+    if cards:
+        check_tip(result, tiers, cards[0], "shop_tip")
+    hover(10, 10)
 
 
 def scenario_shop_relics(result, tiers):
@@ -390,6 +436,10 @@ def scenario_shop_relics(result, tiers):
     result.screenshots.append(shot)
     check_badges(result, view, tiers, "relics", "NMerchantInventory", types=ICON_TYPES)
     check_badges(result, view, tiers, "potions", "NMerchantInventory", types=ICON_TYPES)
+    relics = [r for r in view["relics"] if in_context(r, "NMerchantInventory") and tiers.get(r["id"])]
+    if relics:
+        check_tip(result, tiers, relics[0], "shop_relic_tip")
+    hover(10, 10)
 
 
 def scenario_treasure(result, tiers):
@@ -441,6 +491,10 @@ def scenario_ancient(result, tiers):
     view = inspect()
     result.screenshots.append(screenshot("ancient"))
     check_badges(result, view, tiers, "relics", "NEventRoom", types=BUTTON_TYPES)
+    options = [r for r in view["relics"] if r["type"] == "NEventOptionButton" and fully_inside(r["rect"], view["window"])]
+    if options:
+        check_tip(result, tiers, options[0], "ancient_tip")
+    hover(10, 10)
 
 
 def leave_screens():
@@ -509,6 +563,14 @@ def scenario_upgrade(result, tiers):
     view = inspect()
     result.screenshots.append(screenshot("upgrade"))
     check_badges(result, view, tiers, "cards", "NDeckUpgradeSelectScreen")
+    # Cards worth upgrading are marked with a "+".
+    tiers.character = view["character"]
+    for badge in view["badges"]:
+        expected = tiers.get(badge["item_id"])
+        if badge["visible"] and expected and in_context(badge, "NDeckUpgradeSelectScreen"):
+            want = tier_label(expected.tier) + (" +" if expected.good_upgrade else "")
+            if badge["label"] != want:
+                result.fail(f"{badge['item_id']}: upgrade badge reads {badge['label']!r}, expected {want!r}")
     act("cancel_selection")
 
 

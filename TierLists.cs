@@ -8,7 +8,10 @@ using Godot;
 
 namespace TierListOverlay;
 
-public sealed record TierEntry(string Tier, string Color, string Commentary);
+/// <param name="Author">Who rated the item, e.g. "Baalorlord".</param>
+/// <param name="GoodUpgrade">Whether upgrading this card is worth it.</param>
+/// <param name="MaxCopies">How many copies the deck wants at most, if limited.</param>
+public sealed record TierEntry(string Tier, string Color, string Commentary, string Author, bool GoodUpgrade, int? MaxCopies);
 
 /// <summary>
 /// Loads tier lists from the public Untapped.gg API, caching them next to the mod DLL so the
@@ -91,7 +94,10 @@ internal static class TierLists
     {
         var into = new Dictionary<string, TierEntry>();
         using var doc = JsonDocument.Parse(json);
-        foreach (var tier in doc.RootElement.GetProperty("tier_list").GetProperty("tiers").EnumerateArray())
+        var list = doc.RootElement.GetProperty("tier_list");
+        var author = list.TryGetProperty("author", out var a) && a.ValueKind == JsonValueKind.Object && a.TryGetProperty("display_name", out var dn)
+            ? dn.GetString() ?? "" : "";
+        foreach (var tier in list.GetProperty("tiers").EnumerateArray())
         {
             var name = tier.GetProperty("name").GetString() ?? "?";
             var color = tier.TryGetProperty("color", out var c) ? c.GetString() ?? "#808080" : "#808080";
@@ -105,7 +111,9 @@ internal static class TierLists
                     if (id == null)
                         continue;
                     var commentary = item.TryGetProperty("commentary", out var cm) ? cm.GetString() ?? "" : "";
-                    into[id] = new TierEntry(name, color, commentary);
+                    var goodUpgrade = item.TryGetProperty("good_upgrade", out var gu) && gu.ValueKind == JsonValueKind.True;
+                    int? maxCopies = item.TryGetProperty("max_copies", out var mc) && mc.ValueKind == JsonValueKind.Number ? mc.GetInt32() : null;
+                    into[id] = new TierEntry(name, color, commentary, author, goodUpgrade, maxCopies);
                 }
             }
         }

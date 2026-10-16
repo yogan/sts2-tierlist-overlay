@@ -48,6 +48,7 @@ public static class TierListOverlayMod
     {
         if (node is NCard or NRelic or NPotion or NRewardButton or NEventOptionButton)
             Tracked.Add((Control)node);
+        Tips.OnNodeAdded(node);
     }
 
     private static void OnProcessFrame()
@@ -57,12 +58,13 @@ public static class TierListOverlayMod
         if (Tracked.Count == 0)
             return;
         var characterId = CurrentCharacterId();
+        Tips.OnProcessFrame(characterId);
         foreach (var node in Tracked)
         {
             try
             {
                 var (itemId, placement, bounds) = Describe(node);
-                Badges.Sync(node, Lookup(characterId, itemId), bounds, placement);
+                Badges.Sync(node, Lookup(characterId, itemId), bounds, placement, node is NCard && HasAncestor<NDeckUpgradeSelectScreen>(node));
             }
             catch (Exception ex)
             {
