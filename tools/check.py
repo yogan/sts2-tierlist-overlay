@@ -106,7 +106,17 @@ def wait_for(predicate, what, timeout=20.0):
 
 
 def wait_state(*types, timeout=20.0):
-    return wait_for(lambda: (s := state())["state_type"] in types and s, f"state {'/'.join(types)}", timeout)
+    seen = []
+
+    def check():
+        s = state()
+        seen.append(s["state_type"])
+        return s["state_type"] in types and s
+
+    try:
+        return wait_for(check, f"state {'/'.join(types)}", timeout)
+    except CheckError as e:
+        raise CheckError(f"{e} (last state: {seen[-1] if seen else '?'})") from None
 
 
 # --- Game setup ---------------------------------------------------------------------------
@@ -185,11 +195,12 @@ def in_context(item, context_type):
     return context_type in item["context"]
 
 
-def check_badges(result, view, tiers, kind, context_type):
-    """Every fully visible item of `kind` below `context_type` must show its tier badge."""
+def check_badges(result, view, tiers, kind, context_type, types=None):
+    """Every fully visible item of `kind` below `context_type` (optionally only of node
+    `types`) must show its tier badge."""
     tiers.character = view["character"]
     window = view["window"]
-    items = [i for i in view[kind] if i["on_screen"] and in_context(i, context_type)]
+    items = [i for i in view[kind] if i["on_screen"] and in_context(i, context_type) and (types is None or i["type"] in types)]
     if not items:
         result.fail(f"no {kind} found on screen in {context_type}")
         return
@@ -200,7 +211,7 @@ def check_badges(result, view, tiers, kind, context_type):
     for badge in view["badges"]:
         if not (badge["visible"] and badge["on_screen"]):
             continue
-        nearest = min(items, key=lambda i: badge_distance(badge["rect"], i["rect"]))
+        nearest = min(items, key=lambda i: badge_distance(badge["rect"], i))
         if badge_belongs_to(badge["rect"], nearest["rect"]):
             owners.setdefault(id(nearest), []).append(badge)
     for item in items:
@@ -246,15 +257,32 @@ def check_tooltip_layering(result, view, tiers, shot):
 # --- Geometry and pixels ------------------------------------------------------------------
 
 def badge_belongs_to(badge, item):
-    """The badge's centre lies within the item's lower half (the badge sits at its bottom edge)."""
+    """The badge's centre lies on the item or within a badge height of its edges."""
     bx, by = centre(badge)
-    return item[0] <= bx <= item[0] + item[2] and item[1] + item[3] / 2 <= by <= item[1] + item[3]
+    m = badge[3]
+    return item[0] - m <= bx <= item[0] + item[2] + m and item[1] - m <= by <= item[1] + item[3] + m
+
+
+# Where the mod puts badges, by the item's node type (see Placement in Badges.cs).
+BUTTON_TYPES = {"NRewardButton", "NEventOptionButton"}
+ICON_TYPES = {"NRelic", "NPotion"}
 
 
 def badge_distance(badge, item):
-    """Distance from the badge's centre to where the mod puts it: centred, at the bottom edge."""
+    """Distance from the badge's centre to its spot on the item: inside the bottom edge of a
+    card, across the top edge of an icon, inside the right edge of a button (top right for
+    ancient options)."""
     bx, by = centre(badge)
-    return abs(bx - (item[0] + item[2] / 2)) + abs(by - (item[1] + item[3] - badge[3]))
+    x, y, w, h = item["rect"]
+    if item["type"] == "NEventOptionButton":
+        spot = (x + w - badge[2] / 2, y + badge[3])
+    elif item["type"] in BUTTON_TYPES:
+        spot = (x + w - badge[2] / 2, y + h / 2)
+    elif item["type"] in ICON_TYPES:
+        spot = (x + w / 2, y)
+    else:
+        spot = (x + w / 2, y + h - badge[3])
+    return abs(bx - spot[0]) + abs(by - spot[1])
 
 
 def fully_inside(rect, window):
@@ -360,8 +388,59 @@ def scenario_shop_relics(result, tiers):
     """Shop inventory: relics and potions."""
     view, shot = open_shop("shop_relics")
     result.screenshots.append(shot)
-    check_badges(result, view, tiers, "relics", "NMerchantInventory")
-    check_badges(result, view, tiers, "potions", "NMerchantInventory")
+    check_badges(result, view, tiers, "relics", "NMerchantInventory", types=ICON_TYPES)
+    check_badges(result, view, tiers, "potions", "NMerchantInventory", types=ICON_TYPES)
+
+
+def scenario_treasure(result, tiers):
+    """Treasure chest relic."""
+    ensure_test_run()
+    leave_screens()
+    console("room Treasure")
+    wait_state("treasure")
+    time.sleep(3)  # the chest opens with an animation
+    view = inspect()
+    result.screenshots.append(screenshot("treasure"))
+    check_badges(result, view, tiers, "relics", "NTreasureRoomRelicCollection")
+    act("claim_treasure_relic", index=0)
+
+
+def scenario_elite_loot(result, tiers):
+    """Elite loot: relic and potion reward buttons."""
+    ensure_test_run()
+    leave_screens()
+    console("room Elite")
+    wait_state("elite")
+    console("win")
+    wait_state("rewards")
+    time.sleep(1.5)
+    view = inspect()
+    result.screenshots.append(screenshot("elite_loot"))
+    check_badges(result, view, tiers, "relics", "NRewardsScreen", types=BUTTON_TYPES)
+    if any(i["type"] == "NRewardButton" for i in view["potions"]):
+        check_badges(result, view, tiers, "potions", "NRewardsScreen", types=BUTTON_TYPES)
+
+
+def scenario_ancient(result, tiers):
+    """Ancient event (Darv) offering relics as options."""
+    ensure_test_run()
+    leave_screens()
+    console("ancient DARV")
+    # A resumed run can show its saved loot screen or the map on top of the event.
+    for _ in range(3):
+        s = wait_state("event", "map", "rewards", "card_reward")
+        if s["state_type"] == "event":
+            break
+        if s["state_type"] == "map":
+            call("NTopBarMapButton", "OnRelease")
+        else:
+            call("NOverlayStack", "Clear")
+        time.sleep(1.5)
+    wait_state("event")
+    time.sleep(2)
+    view = inspect()
+    result.screenshots.append(screenshot("ancient"))
+    check_badges(result, view, tiers, "relics", "NEventRoom", types=BUTTON_TYPES)
 
 
 def leave_screens():
@@ -369,6 +448,10 @@ def leave_screens():
     s = state()
     if s["state_type"] == "card_select" and s["card_select"].get("can_cancel"):
         act("cancel_selection")
+    elif s["state_type"] in ("rewards", "card_reward"):
+        # Console room jumps leave reward overlays open on top of the next room.
+        call("NOverlayStack", "Clear")
+        time.sleep(1)
 
 
 def grid_from_relic(result, tiers, relic, context, picks, name):
@@ -464,6 +547,9 @@ SCENARIOS = {
     "choose_a_card": scenario_choose_a_card,
     "shop": scenario_shop,
     "shop_relics": scenario_shop_relics,
+    "treasure": scenario_treasure,
+    "elite_loot": scenario_elite_loot,
+    "ancient": scenario_ancient,
     "upgrade": scenario_upgrade,
     "transform": scenario_transform,
     "enchant": scenario_enchant,

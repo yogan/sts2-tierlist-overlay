@@ -2,8 +2,8 @@
   "id": "TierListOverlay",
   "name": "Tier List Overlay",
   "author": "yogan",
-  "description": "Shows community tier list ratings on cards in-game",
-  "version": "0.2.0",
+  "description": "Shows community tier list ratings on cards, relics and potions in-game",
+  "version": "0.3.0",
   "has_pck": false,
   "has_dll": true,
   "affects_gameplay": false

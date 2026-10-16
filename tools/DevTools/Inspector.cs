@@ -2,9 +2,12 @@ using System.Collections.Generic;
 using System.Linq;
 using Godot;
 using MegaCrit.Sts2.Core.Nodes.Cards;
+using MegaCrit.Sts2.Core.Nodes.Events;
 using MegaCrit.Sts2.Core.Nodes.HoverTips;
 using MegaCrit.Sts2.Core.Nodes.Potions;
 using MegaCrit.Sts2.Core.Nodes.Relics;
+using MegaCrit.Sts2.Core.Nodes.Rewards;
+using MegaCrit.Sts2.Core.Rewards;
 
 namespace DevTools;
 
@@ -45,6 +48,16 @@ internal static class Inspector
                     break;
                 case NPotion potion:
                     potions.Add(Describe(potion, potion.Model?.Id.Entry, toWindow));
+                    break;
+                // Loot buttons and ancient options show a relic or potion only as an icon.
+                case NRewardButton { Reward: RelicReward r } button:
+                    relics.Add(Describe(button, r.Relic?.Id.Entry, toWindow));
+                    break;
+                case NRewardButton { Reward: PotionReward p } button:
+                    potions.Add(Describe(button, p.Potion?.Id.Entry, toWindow));
+                    break;
+                case NEventOptionButton { Option.Relic: { } relic } option:
+                    relics.Add(Describe(option, relic.Id.Entry, toWindow));
                     break;
                 case NHoverTipSet tips:
                     // The set stays at the origin and positions its tip container instead.
