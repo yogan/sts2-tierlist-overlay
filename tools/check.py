@@ -29,7 +29,9 @@ DEVTOOLS = "http://localhost:15527"
 TEST_PROFILE = 2
 REPO = Path(__file__).resolve().parent.parent
 ARTIFACTS = REPO / ".artifacts"
-MOD_DIR = Path.home() / "Library/Application Support/Steam/steamapps/common/Slay the Spire 2/SlayTheSpire2.app/Contents/MacOS/mods/TierListOverlay"
+GAME_APP = Path.home() / "Library/Application Support/Steam/steamapps/common/Slay the Spire 2/SlayTheSpire2.app"
+MOD_DIR = GAME_APP / "Contents/MacOS/mods/TierListOverlay"
+GAME_LOG = Path.home() / "Library/Application Support/SlayTheSpire2/logs/godot.log"
 
 
 class CheckError(Exception):
@@ -651,6 +653,35 @@ def scenario_bundle(result, tiers):
     console("relic remove SCROLL_BOXES")
 
 
+def version_tuple(v):
+    return tuple(int(x) for x in v.lstrip("v").split("."))
+
+
+def scenario_lists(result, tiers):
+    """Tier lists are requested for the installed game version, cached, and their IDs checked."""
+    game_version = json.loads((GAME_APP / "Contents/Resources/release_info.json").read_text())["version"]
+    log = [line for line in GAME_LOG.read_text(errors="replace").splitlines() if "[TierListOverlay]" in line]
+    if f"[TierListOverlay] Game version {game_version}" not in log:
+        result.fail(f"mod did not log game version {game_version}")
+    if any("Last tested on game" in line for line in log):
+        result.fail(f"the mod was last tested on another game version than {game_version}: "
+                    "run the routine in docs/UPDATING.md, then raise TestedGameVersion")
+    stamp = (MOD_DIR / "cache" / "fetched.cfg").read_text() if (MOD_DIR / "cache" / "fetched.cfg").exists() else ""
+    if f'game_version="{game_version}"' not in stamp:
+        result.fail(f"cache was not fetched for {game_version}: {stamp.strip()!r}")
+    for path in sorted((MOD_DIR / "cache").glob("*-*.tierlist")):
+        list_version = json.loads(path.read_text())["tier_list"]["version"]
+        if version_tuple(list_version) > version_tuple(game_version):
+            result.fail(f"{path.name} is for {list_version}, newer than the game ({game_version})")
+        else:
+            result.note(f"{path.name}: {list_version}")
+    if not any("Unknown IDs in" in line or "All tier list IDs are known" in line for line in log):
+        result.fail("mod did not check the lists' IDs against the game")
+    for line in log:
+        if "Unknown IDs in" in line:
+            result.note(line.split("] ", 1)[1])
+
+
 SETTING_KEYS = ("use_jorbs", "card_choices", "deck_screens", "relics", "hover_tips")
 
 
@@ -770,6 +801,7 @@ SCENARIOS = {
     "bundle": scenario_bundle,
     "deck_view": scenario_deck_view,
     "settings": scenario_settings,
+    "lists": scenario_lists,
 }
 
 

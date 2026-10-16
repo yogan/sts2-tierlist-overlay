@@ -1,9 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using Godot;
 using MegaCrit.Sts2.Core.Context;
+using MegaCrit.Sts2.Core.Debug;
+using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Nodes.Cards;
@@ -33,11 +36,21 @@ public static class TierListOverlayMod
     private static readonly HashSet<Control> Tracked = new();
     private static readonly HashSet<string> LoggedUnrated = new();
 
+    // The game version the mod was last checked against (tools/check.py, docs/UPDATING.md).
+    // Badges and tips depend on game internals that an update can change without a build error.
+    private const string TestedGameVersion = "v0.107.1";
+    private static int _checkedGeneration;
+
     public static void Initialize()
     {
         var modDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".";
         Settings.Load(Path.Combine(modDir, "settings.cfg"));
-        TierLists.LoadInBackground(Path.Combine(modDir, "cache"));
+        // Lists are made per game version; ask for the installed one ("v0.107.1").
+        var gameVersion = ReleaseInfoManager.Instance.ReleaseInfo?.Version;
+        GD.Print($"[TierListOverlay] Game version {gameVersion ?? "unknown"}");
+        if (gameVersion != null && gameVersion != TestedGameVersion)
+            GD.PrintErr($"[TierListOverlay] Last tested on game {TestedGameVersion}, this is {gameVersion}: run the update routine in docs/UPDATING.md");
+        TierLists.LoadInBackground(Path.Combine(modDir, "cache"), gameVersion);
 
         var tree = (SceneTree)Engine.GetMainLoop();
         tree.NodeAdded += OnNodeAdded;
@@ -56,6 +69,9 @@ public static class TierListOverlayMod
     private static void OnProcessFrame()
     {
         SettingsUi.OnProcessFrame();
+        // The game's model database may not be ready in the first frames; then try again.
+        if (TierLists.Generation != _checkedGeneration && LogUnknownIds())
+            _checkedGeneration = TierLists.Generation;
         // A pooled node leaves the tree and is added again (and tracked again) on reuse.
         Tracked.RemoveWhere(c => !GodotObject.IsInstanceValid(c) || !c.IsInsideTree());
         if (Tracked.Count == 0)
@@ -109,6 +125,37 @@ public static class TierListOverlayMod
             NEventOptionButton option => (option.Option?.Relic?.Id.Entry, Placement.TopRight, own),
             _ => (null, Placement.InsideBottom, own),
         };
+    }
+
+    // Lists can name items the game does not have (renamed, removed, or from a newer game
+    // version); they never get a badge, so say which ones once per load.
+    private static bool LogUnknownIds()
+    {
+        if (TierLists.Generation == 0)
+            return false;
+        try
+        {
+            var known = new Dictionary<string, HashSet<string>>
+            {
+                ["cards"] = ModelDb.AllCards.Select(c => c.Id.Entry).ToHashSet(),
+                ["relics"] = ModelDb.AllRelics.Select(r => r.Id.Entry).ToHashSet(),
+                ["potions"] = ModelDb.AllPotions.Select(p => p.Id.Entry).ToHashSet(),
+            };
+            var unknown = TierLists.All()
+                .Where(e => known.TryGetValue(e.Entry.Kind, out var ids) && !ids.Contains(e.ItemId))
+                .GroupBy(e => e.List)
+                .ToList();
+            foreach (var list in unknown)
+                GD.Print($"[TierListOverlay] Unknown IDs in {list.Key}: {string.Join(", ", list.Select(e => e.ItemId).OrderBy(id => id))}");
+            if (unknown.Count == 0)
+                GD.Print("[TierListOverlay] All tier list IDs are known to the game");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            GD.PrintErr($"[TierListOverlay] Checking tier list IDs failed: {ex.Message}");
+            return false;
+        }
     }
 
     private static (string Id, TierEntry Entry)? Lookup(string? characterId, string? itemId, bool isCard)
