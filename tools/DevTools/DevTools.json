@@ -1,0 +1,10 @@
+{
+  "id": "DevTools",
+  "name": "Dev Tools",
+  "author": "yogan",
+  "description": "Local HTTP endpoint for screenshots and synthetic mouse input while developing mods",
+  "version": "0.1.0",
+  "has_pck": false,
+  "has_dll": true,
+  "affects_gameplay": false
+}
