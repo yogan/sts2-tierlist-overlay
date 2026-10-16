@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Reflection;
 using Godot;
 using MegaCrit.Sts2.addons.mega_text;
+using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.HoverTips;
 
 namespace TierListOverlay;
@@ -44,13 +45,14 @@ internal static class Tips
             if (!GodotObject.IsInstanceValid(set) || !set.IsInsideTree() || set.HasMeta(DoneMeta))
                 continue;
             set.SetMeta(DoneMeta, true);
-            if (OwnerField?.GetValue(set) is not Control owner || ContainerField?.GetValue(set) is not Container container)
+            if (!Settings.HoverTips || OwnerField?.GetValue(set) is not Control owner || ContainerField?.GetValue(set) is not Container container)
                 continue;
             // The owner is the hovered item or its holder; its badge says what it is rated.
             if (owner.FindChild(Badges.BadgeName, recursive: true, owned: false) is not Control badge)
                 continue;
             var itemId = badge.GetMeta("item_id", "").AsString();
-            if (TierLists.TryGet(characterId, itemId, out var entry))
+            var isCard = badge.GetParent() is NCard;
+            if (TierLists.TryGet(characterId, itemId, out var entry, isCard))
             {
                 AddTip(container, itemId, entry);
                 CorrectVerticalOverflow?.Invoke(set, null);

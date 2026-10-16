@@ -19,38 +19,56 @@ public sealed record TierEntry(string Tier, string Color, string Commentary, str
 /// </summary>
 internal static class TierLists
 {
-    // Baalorlord's lists, one per character plus colorless.
-    private static readonly (string Name, string Uuid)[] Lists =
+    // Baalorlord's and Jorbs' lists, one per character plus colorless. Jorbs rates cards only.
+    private static readonly (string Author, string Name, string Uuid)[] Lists =
     {
-        ("ironclad", "004de170-026a-4dd4-a280-3b904be0b5d6"),
-        ("silent", "6d61ea21-0552-4c49-8bb5-a5c15530fc00"),
-        ("regent", "0e6c1e23-bec6-4887-a9e0-dbf49ede974d"),
-        ("necrobinder", "43d0b41f-7d6d-4ce9-928e-c1310a413983"),
-        ("defect", "5a512e04-4583-4a16-9271-d46864c6cb4c"),
-        ("colorless", "0a626c22-dc49-433e-ac6e-76cc9abf5684"),
+        (Settings.Baalorlord, "ironclad", "004de170-026a-4dd4-a280-3b904be0b5d6"),
+        (Settings.Baalorlord, "silent", "6d61ea21-0552-4c49-8bb5-a5c15530fc00"),
+        (Settings.Baalorlord, "regent", "0e6c1e23-bec6-4887-a9e0-dbf49ede974d"),
+        (Settings.Baalorlord, "necrobinder", "43d0b41f-7d6d-4ce9-928e-c1310a413983"),
+        (Settings.Baalorlord, "defect", "5a512e04-4583-4a16-9271-d46864c6cb4c"),
+        (Settings.Baalorlord, "colorless", "0a626c22-dc49-433e-ac6e-76cc9abf5684"),
+        (Settings.Jorbs, "ironclad", "6b3390b7-bcbc-4ebc-ae78-ae9a400c66dc"),
+        (Settings.Jorbs, "silent", "2cd72d4b-eeb4-42ab-89ca-4ac682137672"),
+        (Settings.Jorbs, "regent", "c47dbfda-4983-4107-8c9c-c33d5ae32b23"),
+        (Settings.Jorbs, "necrobinder", "3ae661e6-6190-4a45-b00e-63e8400fff94"),
+        (Settings.Jorbs, "defect", "5f8d3e04-1f50-4b56-b51a-d8650b000ce3"),
+        (Settings.Jorbs, "colorless", "81684acf-26a7-4e44-a649-84f4c2824ec0"),
     };
 
     private const string ApiUrl = "https://api.sts2.untapped.gg/api/v1/tier-lists/{0}/resolve/?game_version=public";
 
     private const string Colorless = "colorless";
 
-    // List name -> item ID -> entry. Lists rate items per character (e.g. a colorless card can
-    // be S for Ironclad but A in general), so they are kept apart instead of merged.
+    // "author/list" -> item ID -> entry. Lists rate items per character (e.g. a colorless card
+    // can be S for Ironclad but A in general), so they are kept apart instead of merged.
     private static volatile Dictionary<string, Dictionary<string, TierEntry>> _lists = new();
 
     /// <summary>
-    /// Looks an item up: the current character's list wins over the colorless list.
+    /// Looks an item up in the chosen author's lists: the current character's list wins over
+    /// the colorless list. Relics and potions fall back to Baalorlord's lists, since Jorbs
+    /// rates neither.
     /// </summary>
-    public static bool TryGet(string? characterId, string itemId, out TierEntry entry)
+    public static bool TryGet(string? characterId, string itemId, out TierEntry entry, bool isCard = true)
+    {
+        var author = Settings.Author;
+        if (TryGet(author, characterId, itemId, out entry))
+            return true;
+        return !isCard && author != Settings.Baalorlord && TryGet(Settings.Baalorlord, characterId, itemId, out entry);
+    }
+
+    private static bool TryGet(string author, string? characterId, string itemId, out TierEntry entry)
     {
         var lists = _lists;
-        if (characterId != null && lists.TryGetValue(characterId.ToLowerInvariant(), out var own) && own.TryGetValue(itemId, out entry!))
+        if (characterId != null && lists.TryGetValue(Key(author, characterId.ToLowerInvariant()), out var own) && own.TryGetValue(itemId, out entry!))
             return true;
-        if (lists.TryGetValue(Colorless, out var colorless) && colorless.TryGetValue(itemId, out entry!))
+        if (lists.TryGetValue(Key(author, Colorless), out var colorless) && colorless.TryGetValue(itemId, out entry!))
             return true;
         entry = null!;
         return false;
     }
+
+    private static string Key(string author, string name) => $"{author.ToLowerInvariant()}/{name}";
 
     public static void LoadInBackground(string cacheDir)
     {
@@ -61,10 +79,10 @@ internal static class TierLists
                 Directory.CreateDirectory(cacheDir);
                 using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(15) };
                 var lists = new Dictionary<string, Dictionary<string, TierEntry>>();
-                foreach (var (name, uuid) in Lists)
+                foreach (var (author, name, uuid) in Lists)
                 {
                     // Not .json: the game treats every .json file below mods/ as a mod manifest.
-                    var cachePath = Path.Combine(cacheDir, $"{name}.tierlist");
+                    var cachePath = Path.Combine(cacheDir, $"{author.ToLowerInvariant()}-{name}.tierlist");
                     string? json = null;
                     try
                     {
@@ -73,12 +91,12 @@ internal static class TierLists
                     }
                     catch (Exception ex)
                     {
-                        GD.Print($"[TierListOverlay] Fetching {name} failed ({ex.Message}), using cache");
+                        GD.Print($"[TierListOverlay] Fetching {author}'s {name} list failed ({ex.Message}), using cache");
                         if (File.Exists(cachePath))
                             json = await File.ReadAllTextAsync(cachePath);
                     }
                     if (json != null)
-                        lists[name] = Parse(json);
+                        lists[Key(author, name)] = Parse(json);
                 }
                 _lists = lists;
                 GD.Print($"[TierListOverlay] Loaded {lists.Count} tier lists with {lists.Values.Sum(l => l.Count)} entries");

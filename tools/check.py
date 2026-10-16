@@ -84,6 +84,24 @@ def inspect():
     return _request(f"{DEVTOOLS}/inspect")
 
 
+def tree(node_type, depth=8):
+    return _request(f"{DEVTOOLS}/tree?type={node_type}&depth={depth}")
+
+
+def find_node(node, name):
+    if node.get("name") == name:
+        return node
+    for child in node.get("children", []):
+        if found := find_node(child, name):
+            return found
+    return None
+
+
+def click(rect):
+    x, y = centre(rect)
+    _request(f"{DEVTOOLS}/mouse/click?x={x:.0f}&y={y:.0f}", b"")
+
+
 def hover(x, y):
     _request(f"{DEVTOOLS}/mouse/move?x={x:.0f}&y={y:.0f}", b"")
 
@@ -165,28 +183,57 @@ class Entry:
         return (self.tier, self.color)[i]
 
 
+def read_settings():
+    """The mod's settings.cfg (a Godot ConfigFile, INI-like); missing keys use the defaults."""
+    values = {"use_jorbs": False, "card_choices": True, "deck_screens": True, "relics": True, "hover_tips": True}
+    path = MOD_DIR / "settings.cfg"
+    if path.exists():
+        for line in path.read_text().splitlines():
+            if "=" in line:
+                key, value = (part.strip() for part in line.split("=", 1))
+                values[key] = value == "true"
+    return values
+
+
 class TierLists:
-    """The mod's cached tier lists, looked up as the mod does: the current
-    character's list wins over the colorless list (lists rate colorless cards per character)."""
+    """The mod's cached tier lists, looked up like the mod does: the chosen author's lists,
+    where the current character's list wins over the colorless list (lists rate colorless
+    cards per character); relics and potions fall back to Baalorlord, who rates them."""
+
+    AUTHORS = ("baalorlord", "jorbs")
+
+    LISTS_PER_AUTHOR = 6  # five characters and colorless
 
     def __init__(self):
         self.lists = {}
-        files = sorted((MOD_DIR / "cache").glob("*.tierlist"))
-        if not files:
-            raise CheckError(f"no cached tier lists in {MOD_DIR / 'cache'}")
-        for path in files:
-            entries = {}
-            for tier in json.loads(path.read_text())["tier_list"]["tiers"]:
-                for group in ("cards", "relics", "potions"):
-                    for item in tier.get(group) or []:
-                        entries[item["item_id"]] = Entry(tier["name"], tier.get("color", "#808080"),
-                                                         (item.get("commentary") or "").strip(), bool(item.get("good_upgrade")))
-            self.lists[path.stem] = entries
+        # Right after a game start the mod may still be downloading them.
+        wait_for(lambda: all(len(list((MOD_DIR / "cache").glob(f"{a}-*.tierlist"))) >= self.LISTS_PER_AUTHOR for a in self.AUTHORS),
+                 f"cached tier lists in {MOD_DIR / 'cache'}", timeout=60)
+        time.sleep(1)  # the last file may still be being written
+        for author in self.AUTHORS:
+            for path in sorted((MOD_DIR / "cache").glob(f"{author}-*.tierlist")):
+                entries = {}
+                for tier in json.loads(path.read_text())["tier_list"]["tiers"]:
+                    for group in ("cards", "relics", "potions"):
+                        for item in tier.get(group) or []:
+                            entries[item["item_id"]] = Entry(tier["name"], tier.get("color", "#808080"),
+                                                             (item.get("commentary") or "").strip(), bool(item.get("good_upgrade")))
+                self.lists[(author, path.stem.split("-", 1)[1])] = entries
         self.character = None
 
-    def get(self, item_id, default=None):
-        own = self.lists.get((self.character or "").lower(), {})
-        return own.get(item_id) or self.lists.get("colorless", {}).get(item_id) or default
+    @property
+    def author(self):
+        return "jorbs" if read_settings()["use_jorbs"] else "baalorlord"
+
+    def _get(self, author, item_id):
+        own = self.lists.get((author, (self.character or "").lower()), {})
+        return own.get(item_id) or self.lists.get((author, "colorless"), {}).get(item_id)
+
+    def get(self, item_id, default=None, card=True):
+        found = self._get(self.author, item_id)
+        if found is None and not card:
+            found = self._get("baalorlord", item_id)
+        return found or default
 
 
 @dataclass
@@ -229,7 +276,7 @@ def check_badges(result, view, tiers, kind, context_type, types=None):
     for item in items:
         if not fully_inside(item["rect"], window):
             continue
-        expected = tiers.get(item["id"])
+        expected = tiers.get(item["id"], card=kind == "cards")
         near = owners.get(id(item), [])
         if expected is None:
             result.note(f"{item['id']}: not in tier list")
@@ -252,7 +299,7 @@ def tier_label(tier):
 
 def check_tip(result, tiers, item, shot_name=None):
     """Hovering a rated item shows the author's tip with its tier and commentary."""
-    expected = tiers.get(item["id"])
+    expected = tiers.get(item["id"], card=item["type"] == "NCard")
     if expected is None:
         return
     hover(*centre(item["rect"]))
@@ -436,7 +483,7 @@ def scenario_shop_relics(result, tiers):
     result.screenshots.append(shot)
     check_badges(result, view, tiers, "relics", "NMerchantInventory", types=ICON_TYPES)
     check_badges(result, view, tiers, "potions", "NMerchantInventory", types=ICON_TYPES)
-    relics = [r for r in view["relics"] if in_context(r, "NMerchantInventory") and tiers.get(r["id"])]
+    relics = [r for r in view["relics"] if in_context(r, "NMerchantInventory") and tiers.get(r["id"], card=False)]
     if relics:
         check_tip(result, tiers, relics[0], "shop_relic_tip")
     hover(10, 10)
@@ -604,6 +651,109 @@ def scenario_bundle(result, tiers):
     console("relic remove SCROLL_BOXES")
 
 
+SETTING_KEYS = ("use_jorbs", "card_choices", "deck_screens", "relics", "hover_tips")
+
+
+def open_settings():
+    """Opens the game's settings screen through the pause menu and returns its node tree."""
+
+    def press_pause():
+        try:
+            return call("NTopBarPauseButton", "OnRelease")
+        except CheckError as e:
+            if "no NTopBarPauseButton" not in str(e):  # the run's top bar is still loading
+                raise
+            return None
+
+    wait_for(press_pause, "the pause button")
+    time.sleep(1.5)
+    click(find_node(tree("NPauseMenu", 3), "Settings")["rect"])
+    time.sleep(1.5)
+    return tree("NSettingsScreen", 9)
+
+
+def close_settings():
+    click(find_node(tree("NSettingsScreen", 2), "BackButton")["rect"])
+    time.sleep(1.0)
+    click(find_node(tree("NPauseMenu", 3), "Resume")["rect"])
+    time.sleep(1.0)
+
+
+def setting_row(screen, key):
+    return find_node(screen, f"TierListOverlay_{key}")
+
+
+def is_ticked(row):
+    return find_node(row, "Ticked").get("visible", False)
+
+
+def toggle_setting(key):
+    screen = open_settings()
+    click(find_node(setting_row(screen, key), "TickboxVisuals")["rect"])
+    time.sleep(0.5)
+    close_settings()
+
+
+def scenario_settings(result, tiers):
+    """The mod's settings in the game's settings screen: rows, saving, and their effect."""
+    ensure_test_run()
+    leave_screens()
+    before = read_settings()
+    screen = open_settings()
+    result.screenshots.append(screenshot("settings"))
+    for key in SETTING_KEYS:
+        row = setting_row(screen, key)
+        if row is None:
+            result.fail(f"settings row for {key} missing")
+        elif not row.get("visible"):
+            result.fail(f"settings row for {key} not visible")
+        elif is_ticked(row) != before[key]:
+            result.fail(f"settings row for {key} shows {is_ticked(row)}, settings.cfg says {before[key]}")
+    timer_before = is_ticked(find_node(screen, "ShowRunTimer"))
+    close_settings()
+    if result.failures:
+        return
+    try:
+        # Relic badges off: shop cards keep theirs, relics lose them.
+        toggle_setting("relics")
+        if read_settings()["relics"] is not False:
+            result.fail("unticking relics did not save relics = false")
+        view, shot = open_shop("settings_no_relics")
+        result.screenshots.append(shot)
+        shop_relics = [b for b in view["badges"] if b["visible"] and in_context(b, "NMerchantRelic")]
+        if shop_relics:
+            result.fail(f"relic badges shown with relics off: {[b['item_id'] for b in shop_relics]}")
+        check_badges(result, view, tiers, "cards", "NMerchantInventory")
+        toggle_setting("relics")
+
+        # Jorbs: cards use his lists, relics stay with Baalorlord's.
+        toggle_setting("use_jorbs")
+        if not read_settings()["use_jorbs"]:
+            result.fail("ticking use_jorbs did not save use_jorbs = true")
+        view, shot = open_shop("settings_jorbs")
+        result.screenshots.append(shot)
+        result.note("with Jorbs:")
+        check_badges(result, view, tiers, "cards", "NMerchantInventory")
+        check_badges(result, view, tiers, "relics", "NMerchantInventory", types=ICON_TYPES)
+        cards = [c for c in view["cards"] if in_context(c, "NMerchantInventory") and tiers.get(c["id"])]
+        if cards:
+            check_tip(result, tiers, cards[0], "settings_jorbs_tip")
+            tips = [t for t in inspect()["tier_tips"] if t["visible"]]
+            if tips and tips[0]["title"] != "Jorbs":
+                result.fail(f"tip title is {tips[0]['title']!r} with Jorbs chosen")
+        hover(10, 10)
+    finally:
+        now = read_settings()
+        for key in SETTING_KEYS:
+            if now[key] != before[key]:
+                toggle_setting(key)
+        # The mod's rows are copies of the timer row; they must not drive the timer setting.
+        screen = open_settings()
+        if is_ticked(find_node(screen, "ShowRunTimer")) != timer_before:
+            result.fail("toggling the mod's settings changed the game's timer setting")
+        close_settings()
+
+
 SCENARIOS = {
     "card_reward": scenario_card_reward,
     "choose_a_card": scenario_choose_a_card,
@@ -619,6 +769,7 @@ SCENARIOS = {
     "simple_grid": scenario_simple_grid,
     "bundle": scenario_bundle,
     "deck_view": scenario_deck_view,
+    "settings": scenario_settings,
 }
 
 

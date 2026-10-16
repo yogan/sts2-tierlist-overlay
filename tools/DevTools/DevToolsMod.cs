@@ -22,6 +22,8 @@ namespace DevTools;
 ///   GET  /window                          window size in pixels
 ///   POST /console                         run the request body as a dev console command
 ///   GET  /inspect                         cards, relics, potions, badges and hover tips on screen
+///   GET  /tree?type=NSettingsScreen&amp;depth=4  node subtree with types, rects and texts
+///   POST /key?name=Escape                 press and release a key (Godot Key name)
 ///   POST /call?type=NMerchantRoom&amp;method=OpenInventory   call a method on the first node of a type
 ///
 /// Mouse coordinates are window pixels, which are also the pixels of a screenshot, so a
@@ -129,6 +131,23 @@ public static class DevToolsMod
             }
             case "/inspect":
                 return System.Text.Json.JsonSerializer.Serialize(RunOnMainThread(Inspector.Inspect));
+            case "/tree":
+            {
+                var typeName = q["type"] ?? throw new ArgumentException("missing type");
+                var depth = int.Parse(q["depth"] ?? "3", CultureInfo.InvariantCulture);
+                return System.Text.Json.JsonSerializer.Serialize(RunOnMainThread(() => Inspector.Tree(typeName, depth)));
+            }
+            case "/key":
+            {
+                var key = Enum.Parse<Key>(q["name"] ?? throw new ArgumentException("missing name"));
+                RunOnMainThread(() =>
+                {
+                    Input.ParseInputEvent(new InputEventKey { Keycode = key, PhysicalKeycode = key, Pressed = true });
+                    Input.ParseInputEvent(new InputEventKey { Keycode = key, PhysicalKeycode = key, Pressed = false });
+                    return 0;
+                });
+                return "{\"status\": \"ok\"}";
+            }
             case "/window":
             {
                 var size = RunOnMainThread(() => DisplayServer.WindowGetSize());

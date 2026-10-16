@@ -36,6 +36,7 @@ public static class TierListOverlayMod
     public static void Initialize()
     {
         var modDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".";
+        Settings.Load(Path.Combine(modDir, "settings.cfg"));
         TierLists.LoadInBackground(Path.Combine(modDir, "cache"));
 
         var tree = (SceneTree)Engine.GetMainLoop();
@@ -49,10 +50,12 @@ public static class TierListOverlayMod
         if (node is NCard or NRelic or NPotion or NRewardButton or NEventOptionButton)
             Tracked.Add((Control)node);
         Tips.OnNodeAdded(node);
+        SettingsUi.OnNodeAdded(node);
     }
 
     private static void OnProcessFrame()
     {
+        SettingsUi.OnProcessFrame();
         // A pooled node leaves the tree and is added again (and tracked again) on reuse.
         Tracked.RemoveWhere(c => !GodotObject.IsInstanceValid(c) || !c.IsInsideTree());
         if (Tracked.Count == 0)
@@ -64,7 +67,7 @@ public static class TierListOverlayMod
             try
             {
                 var (itemId, placement, bounds) = Describe(node);
-                Badges.Sync(node, Lookup(characterId, itemId), bounds, placement, node is NCard && HasAncestor<NDeckUpgradeSelectScreen>(node));
+                Badges.Sync(node, Lookup(characterId, itemId, node is NCard), bounds, placement, node is NCard && HasAncestor<NDeckUpgradeSelectScreen>(node));
             }
             catch (Exception ex)
             {
@@ -76,14 +79,26 @@ public static class TierListOverlayMod
     // NCard is centred on its origin and has no size of its own; NCard.defaultSize is the frame.
     private static readonly Rect2 CardBounds = new(-NCard.defaultSize / 2, NCard.defaultSize);
 
-    // The item a node shows if it should be rated (null otherwise), where its badge goes, and
-    // the node's visible rectangle in its own coordinates.
+    // The item a node shows if it should be rated (null otherwise, also when the settings turn
+    // its badges off), where its badge goes, and the node's visible rectangle in its own
+    // coordinates.
     private static (string? ItemId, Placement Placement, Rect2 Bounds) Describe(Control node)
     {
         var own = new Rect2(Vector2.Zero, node.Size);
+        if (node is NCard card)
+        {
+            var on = CardScreen(card) switch
+            {
+                CardScreenKind.Choice => Settings.CardChoices,
+                CardScreenKind.Deck => Settings.DeckScreens,
+                _ => false,
+            };
+            return (on ? card.Model?.Id.Entry : null, Placement.InsideBottom, CardBounds);
+        }
+        if (!Settings.Relics)
+            return (null, Placement.AcrossTop, own);
         return node switch
         {
-            NCard card => (IsOnCardChoiceScreen(card) ? card.Model?.Id.Entry : null, Placement.InsideBottom, CardBounds),
             NRelic relic when HasAncestor<NMerchantInventory>(relic) || HasAncestor<NTreasureRoomRelicCollection>(relic) || HasAncestor<NChooseARelicSelection>(relic)
                 => (relic.Model.Id.Entry, Placement.AcrossTop, own),
             NPotion potion when HasAncestor<NMerchantInventory>(potion) => (potion.Model.Id.Entry, Placement.AcrossTop, own),
@@ -96,11 +111,11 @@ public static class TierListOverlayMod
         };
     }
 
-    private static (string Id, TierEntry Entry)? Lookup(string? characterId, string? itemId)
+    private static (string Id, TierEntry Entry)? Lookup(string? characterId, string? itemId, bool isCard)
     {
         if (itemId == null)
             return null;
-        if (TierLists.TryGet(characterId, itemId, out var entry))
+        if (TierLists.TryGet(characterId, itemId, out var entry, isCard))
             return (itemId, entry);
         if (LoggedUnrated.Add(itemId))
             GD.Print($"[TierListOverlay] No tier for {itemId}");
@@ -124,23 +139,34 @@ public static class TierListOverlayMod
         return false;
     }
 
+    private enum CardScreenKind
+    {
+        None,
+        // Picking or buying new cards.
+        Choice,
+        // Working on the deck.
+        Deck,
+    }
+
     // Screens where the player picks, buys or works on cards. Not combat piles and hands, and
     // not the inspect screen (a single enlarged card opened from one of these).
-    private static bool IsOnCardChoiceScreen(Node node)
+    private static CardScreenKind CardScreen(Node node)
     {
         for (var n = node.GetParent(); n != null; n = n.GetParent())
         {
             switch (n)
             {
                 case NInspectCardScreen:
-                    return false;
+                    return CardScreenKind.None;
                 case NCardRewardSelectionScreen or NChooseACardSelectionScreen or NChooseABundleSelectionScreen:
                 case NMerchantInventory:
-                case NDeckUpgradeSelectScreen or NDeckTransformSelectScreen or NDeckEnchantSelectScreen or NDeckCardSelectScreen or NSimpleCardSelectScreen:
+                case NSimpleCardSelectScreen:
+                    return CardScreenKind.Choice;
+                case NDeckUpgradeSelectScreen or NDeckTransformSelectScreen or NDeckEnchantSelectScreen or NDeckCardSelectScreen:
                 case NDeckViewScreen:
-                    return true;
+                    return CardScreenKind.Deck;
             }
         }
-        return false;
+        return CardScreenKind.None;
     }
 }

@@ -128,6 +128,34 @@ internal static class Inspector
         return rect[0] < window.X && rect[1] < window.Y && rect[0] + rect[2] > 0 && rect[1] + rect[3] > 0;
     }
 
+    /// <summary>
+    /// The subtree below the first node of a type: name, type, visibility and window rect of
+    /// each node, down to `depth` levels. For finding where things are on unfamiliar screens.
+    /// </summary>
+    public static Dictionary<string, object?> Tree(string typeName, int depth)
+    {
+        var node = FindByType(typeName) ?? throw new System.ArgumentException($"no {typeName} in tree");
+        var toWindow = ((SceneTree)Engine.GetMainLoop()).Root.GetFinalTransform();
+        return Describe(node, depth, toWindow);
+    }
+
+    private static Dictionary<string, object?> Describe(Node node, int depth, Transform2D toWindow)
+    {
+        var d = new Dictionary<string, object?> { ["name"] = node.Name.ToString(), ["type"] = node.GetType().Name };
+        if (node is Control c)
+        {
+            d["visible"] = c.IsVisibleInTree();
+            d["rect"] = ToArray(OwnRect(c, toWindow));
+        }
+        if (node is Label l)
+            d["text"] = l.Text;
+        else if (node is RichTextLabel r)
+            d["text"] = r.GetParsedText();
+        if (depth > 0 && node.GetChildCount() > 0)
+            d["children"] = node.GetChildren().Select(child => Describe(child, depth - 1, toWindow)).ToList();
+        return d;
+    }
+
     /// <summary>Finds the first node in the tree whose type has the given name.</summary>
     public static Node? FindByType(string typeName)
     {
