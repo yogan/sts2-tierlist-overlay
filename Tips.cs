@@ -1,7 +1,9 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using Godot;
 using MegaCrit.Sts2.addons.mega_text;
+using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.HoverTips;
 
@@ -62,6 +64,17 @@ internal static class Tips
         Pending.Clear();
     }
 
+    // The lists' commentary is typed like a typewriter: two spaces after a sentence
+    // (Baalorlord) and a blank line between paragraphs (Jorbs). One space, and a paragraph
+    // starts on the next line: the tip is narrow.
+    private static string Tidy(string commentary)
+    {
+        var lines = commentary.Replace("\r\n", "\n").Split('\n')
+            .Select(line => System.Text.RegularExpressions.Regex.Replace(line, @"[ \t]+", " ").Trim())
+            .Where(line => line.Length > 0);
+        return string.Join("\n", lines);
+    }
+
     private static void AddTip(Container container, string itemId, TierEntry entry)
     {
         _scene ??= ResourceLoader.Load<PackedScene>(TipScene);
@@ -75,9 +88,10 @@ internal static class Tips
         var colour = new Color(entry.Color).Lightened(0.3f).ToHtml(includeAlpha: false);
         var text = $"[color=#{colour}]{Badges.TierLabel(entry.Tier)}[/color]";
         if (!string.IsNullOrWhiteSpace(entry.Commentary))
-            text += "\n" + entry.Commentary.Trim().Replace("[", "[lb]");
+            text += "\n" + Tidy(entry.Commentary).Replace("[", "[lb]");
+        // A flag in the list, shown in the green the game gives upgraded card names.
         if (entry.GoodUpgrade)
-            text += "\nGood upgrade.";
+            text += $"\n[color=#{StsColors.green.ToHtml(includeAlpha: false)}]Good upgrade[/color]";
         tip.GetNode<MegaRichTextLabel>("%Description").Text = text;
         tip.GetNode<TextureRect>("%Icon").Texture = null;
         tip.ResetSize();

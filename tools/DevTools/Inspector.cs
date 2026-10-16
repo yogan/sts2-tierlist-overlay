@@ -61,8 +61,17 @@ internal static class Inspector
                     relics.Add(Describe(option, relic.Id.Entry, toWindow));
                     break;
                 case NHoverTipSet tips:
-                    // The set stays at the origin and positions its tip container instead.
-                    hoverTips.Add(new Dictionary<string, object?> { ["rect"] = ToArray(DescendantUnion(tips, toWindow) ?? OwnRect(tips, toWindow)) });
+                    // The set stays at the origin and positions its tip containers instead. Each
+                    // tip is reported as its panel; its textures reach a little further with a
+                    // transparent shadow margin, where things behind still show.
+                    foreach (var container in tips.GetChildren().OfType<Control>())
+                    {
+                        foreach (var tip in container.GetChildren().OfType<Control>())
+                        {
+                            if (tip.IsVisibleInTree() && tip.Size.X > 0 && tip.Size.Y > 0)
+                                hoverTips.Add(new Dictionary<string, object?> { ["rect"] = ToArray(OwnRect(tip, toWindow)) });
+                        }
+                    }
                     break;
             }
         });
@@ -89,6 +98,7 @@ internal static class Inspector
             ["rect"] = Rect(tip, toWindow),
             ["title"] = (tip.FindChild("Title", true, false) as Label)?.Text,
             ["text"] = (tip.FindChild("Description", true, false) as RichTextLabel)?.GetParsedText(),
+            ["bbcode"] = (tip.FindChild("Description", true, false) as RichTextLabel)?.Text,
         }).ToList();
 
         var windowSize = DisplayServer.WindowGetSize();
@@ -147,6 +157,11 @@ internal static class Inspector
             d["visible"] = c.IsVisibleInTree();
             d["rect"] = ToArray(OwnRect(c, toWindow));
         }
+        // Many game nodes expose their state as a State property (e.g. an epoch slot's
+        // NotObtained/Obtained/Complete); report it so tools can tell such nodes apart.
+        var state = node.Get("State");
+        if (state.VariantType != Variant.Type.Nil)
+            d["state"] = state.ToString();
         if (node is Label l)
             d["text"] = l.Text;
         else if (node is RichTextLabel r)

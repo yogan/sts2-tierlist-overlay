@@ -48,6 +48,8 @@ def _request(url, body=None):
             return json.load(r)
     except urllib.error.HTTPError as e:
         raise CheckError(f"{url} -> HTTP {e.code}: {e.read().decode(errors='replace')[:500]}") from None
+    except urllib.error.URLError as e:
+        raise CheckError(f"{url} -> {e.reason}: is the game running with the mods? (tools/reload.sh)") from None
 
 
 def state():
@@ -155,16 +157,119 @@ def ensure_test_run():
             raise CheckError("could not get from the menu into a run")
         options = s.get("options", [])
         screen = s.get("menu_screen")
-        if screen == "main" and "continue" in options:
-            act("menu_select", option="continue")
-        elif screen == "main" and "singleplayer" in options:
-            act("menu_select", option="singleplayer")
-        elif screen == "character_select":
-            act("menu_select", option="IRONCLAD")
-            act("menu_select", option="embark")
-        elif screen == "tutorial_prompt":
-            act("menu_select", option="no")
+        try:
+            if screen == "main" and "continue" in options:
+                act("menu_select", option="continue")
+            elif screen == "main" and "singleplayer" in options:
+                act("menu_select", option="singleplayer")
+            elif screen == "singleplayer":  # game mode, once the Timeline unlocks more than Standard
+                act("menu_select", option="standard")
+            elif screen == "character_select":
+                act("menu_select", option="IRONCLAD")
+                time.sleep(1.5)  # Embark becomes available once the selection has landed
+                act("menu_select", option="embark")
+            elif screen == "tutorial_prompt":
+                act("menu_select", option="no")
+        except CheckError as e:
+            # A screen change between reading the state and acting on it; look again.
+            if "Not on a menu screen" not in str(e) and "not available" not in str(e):
+                raise
         time.sleep(1.5)
+    wait_run_started()
+
+
+def wait_run_started(timeout=60.0):
+    """Waits until a run (started or continued) has finished loading. Jumping rooms with the
+    dev console while the run is still being set up (a new run starts at Neow's event) throws
+    in the game's event code and then crashes the run start."""
+    deadline = time.monotonic() + timeout
+    last = None
+    while time.monotonic() < deadline:
+        s = state()
+        settled = s["state_type"] not in ("menu", "unknown") and _has_node("NTopBarPauseButton")
+        if settled and s["state_type"] == last:
+            return
+        last = s["state_type"] if settled else None
+        time.sleep(1.0)
+    raise CheckError(f"the run did not finish loading (state {state()['state_type']})")
+
+
+def _has_node(node_type):
+    try:
+        tree(node_type, 0)
+        return True
+    except CheckError as e:
+        if f"no {node_type}" in str(e):
+            return False
+        raise
+
+
+def new_test_run():
+    """Abandons the test profile's run so the next scenario starts a fresh one (a long test
+    run runs out of relics: shops and loot then only offer Circlets)."""
+    profiles = _request(f"{MCP}/api/v1/profiles")
+    if profiles["current_profile_id"] != TEST_PROFILE:
+        raise CheckError(f"profile {profiles['current_profile_id']} is active; refusing to abandon its run")
+    if state()["state_type"] != "menu":
+        call("NOverlayStack", "Clear")
+        wait_for(lambda: _try_call("NTopBarPauseButton", "OnRelease"), "the pause button")
+        time.sleep(1.5)
+        click(find_node(tree("NPauseMenu", 3), "SaveAndQuit")["rect"])
+        wait_state("menu", timeout=30)
+        time.sleep(2)
+    # Right after a game start the main menu exists before its buttons do.
+    s = wait_for(lambda: (s := state()).get("menu_screen") == "main" and s.get("options") and s, "the main menu")
+    if "abandon_run" in s.get("options", []):
+        act("menu_select", option="abandon_run")
+        time.sleep(1.5)
+        act("menu_select", option="yes")
+        time.sleep(3)
+    if any(b.get("reason") == "manual_epoch_reveal_required" for b in state().get("blocked_options") or []):
+        reveal_epochs()
+
+
+# EpochSlotState.Obtained: earned, waiting to be revealed by a click.
+EPOCH_OBTAINED = "2"
+
+
+def reveal_epochs():
+    """Reveals the Timeline epochs a finished or abandoned run earned; until then the main
+    menu offers no Singleplayer. STS2MCP refuses this (it logs unlock-state errors when
+    driven through automation), but real mouse clicks work like a player's."""
+    print("     ↻ revealing new Timeline epochs")
+    if state().get("menu_screen") != "timeline":
+        click(find_node(tree("NMainMenu", 4), "TimelineButton")["rect"])
+        time.sleep(4)
+    window = inspect()["window"]
+    for _ in range(30):
+        nodes = list(walk(tree("NGame", 30)))
+        visible = [n for n in nodes if n.get("visible") and n.get("rect") and n["rect"][2] > 0]
+        # Reveal and unlock screens end in a Continue/Confirm button.
+        buttons = [n for n in visible if n["type"] in ("NCloseButton", "NConfirmButton", "NProceedButton")]
+        slots = [n for n in visible if n["type"] == "NEpochSlot" and n.get("state") == EPOCH_OBTAINED
+                 and fully_inside(n["rect"], window)]
+        if buttons:
+            click(buttons[0]["rect"])
+        elif slots:
+            click(slots[0]["rect"])
+        else:
+            break
+        time.sleep(4)
+    # The back button's node sits off screen (it only slides in visually); STS2MCP can leave.
+    act("menu_select", option="back")
+    time.sleep(2)
+    blocked = [b for b in state().get("blocked_options") or [] if b.get("reason") == "manual_epoch_reveal_required"]
+    if blocked:
+        raise CheckError(f"Timeline epochs still unrevealed: {', '.join(blocked[0].get('pending_epoch_ids', []))}")
+
+
+def _try_call(node_type, method):
+    try:
+        return call(node_type, method)
+    except CheckError as e:
+        if f"no {node_type}" not in str(e):
+            raise
+        return None
 
 
 def enter_combat():
@@ -270,7 +375,8 @@ def check_badges(result, view, tiers, kind, context_type, types=None):
     # badge left over from another card must not count.
     owners = {}
     for badge in view["badges"]:
-        if not (badge["visible"] and badge["on_screen"]):
+        # Badges of a screen underneath (e.g. an event behind the deck view) do not count.
+        if not (badge["visible"] and badge["on_screen"] and in_context(badge, context_type)):
             continue
         nearest = min(items, key=lambda i: badge_distance(badge["rect"], i))
         if badge_belongs_to(badge["rect"], nearest["rect"]):
@@ -288,7 +394,7 @@ def check_badges(result, view, tiers, kind, context_type, types=None):
         if not near:
             result.fail(f"{item['id']}: missing badge (expected {expected[0]})")
         elif len(near) > 1:
-            result.fail(f"{item['id']}: {len(near)} badges")
+            result.fail(f"{item['id']}: {len(near)} badges ({', '.join(b['item_id'] + str([round(v) for v in b['rect']]) for b in near)})")
         elif near[0]["item_id"] != item["id"] or near[0]["tier"] != expected[0]:
             result.fail(f"{item['id']}: badge shows {near[0]['item_id']}/{near[0]['tier']}, expected {expected[0]}")
         else:
@@ -304,14 +410,30 @@ def check_tip(result, tiers, item, shot_name=None):
     expected = tiers.get(item["id"], card=item["type"] == "NCard")
     if expected is None:
         return
-    hover(*centre(item["rect"]))
-    time.sleep(1.0)
-    view = inspect()
+    x, y = centre(item["rect"])
+    hover(x, y)
+    # The tip normally shows within a frame or two; allow for screens still animating in.
+    # A synthetic mouse move now and then does not register as entering the item (no game
+    # tips either); then leave and enter again once.
+    start = time.monotonic()
+    nudged = False
+    while True:
+        time.sleep(0.25)
+        view = inspect()
+        tips = [t for t in view["tier_tips"] if t["visible"] and t["item_id"] == item["id"]]
+        if tips or time.monotonic() - start > 3.0:
+            break
+        if not view["hover_tips"] and not nudged and time.monotonic() - start > 1.0:
+            hover(10, 10)
+            time.sleep(0.25)
+            hover(x, y)
+            nudged = True
     if shot_name:
         result.screenshots.append(screenshot(shot_name))
-    tips = [t for t in view["tier_tips"] if t["visible"] and t["item_id"] == item["id"]]
     if len(tips) != 1:
-        result.fail(f"{item['id']}: {len(tips)} tier tips while hovered (expected 1)")
+        result.fail(f"{item['id']}: {len(tips)} tier tips while hovered (expected 1; "
+                    f"{len(view['hover_tips'])} game tips visible, so the hover "
+                    f"{'landed' if view['hover_tips'] else 'missed'})")
         return
     text = tips[0]["text"] or ""
     if tier_label(expected.tier) not in text:
@@ -320,10 +442,107 @@ def check_tip(result, tiers, item, shot_name=None):
         result.fail(f"{item['id']}: tip lacks commentary {expected.commentary[:40]!r}: {text[:80]!r}")
     elif not any(overlaps(tips[0]["rect"], t["rect"]) for t in view["hover_tips"]):
         result.fail(f"{item['id']}: tip is not part of the game's hover tips")
+    elif "  " in text or "\n\n" in text:
+        result.fail(f"{item['id']}: tip has a double space or blank line: {text[:120]!r}")
+    elif expected.good_upgrade != ("[color=#7fff00]good upgrade[/color]" in (tips[0]["bbcode"] or "").lower()):
+        result.fail(f"{item['id']}: good_upgrade={expected.good_upgrade}, but tip reads {tips[0]['bbcode']!r}")
     elif not fully_inside(tips[0]["rect"], view["window"]):
         result.fail(f"{item['id']}: tip runs off screen at {[round(v) for v in tips[0]['rect']]}")
     else:
         result.note(f"{item['id']}: tip ✓")
+
+
+def check_badges_on_border(result, view, shot, context_type):
+    """A card badge's pointed ends (its vertical middle) must sit on the frame's light inner
+    border line: the bright red rows between the description box and the frame."""
+    image = Image.open(shot).convert("RGB")
+    cards = [c for c in view["cards"] if in_context(c, context_type) and fully_inside(c["rect"], view["window"])]
+    checked = 0
+    for badge in view["badges"]:
+        if not (badge["visible"] and in_context(badge, context_type)):
+            continue
+        bx, by = centre(badge["rect"])
+        card = next((c for c in cards if c["rect"][0] <= bx <= c["rect"][0] + c["rect"][2]
+                     and c["rect"][1] <= by <= c["rect"][1] + c["rect"][3]), None)
+        if card is None:
+            continue
+        # A column beside the badge, inside the frame: look for the light line near the badge.
+        x = int(badge["rect"][0] - card["rect"][2] * 0.06)
+        rows = [y for y in range(int(by - badge["rect"][3]), int(by + badge["rect"][3]))
+                if (p := image.getpixel((x, y)))[0] > 140 and p[0] - p[1] > 60 and p[1] > 60]
+        if not rows:
+            result.fail(f"{badge['item_id']}: no light border line found beside the badge")
+            continue
+        # The first run of light rows below the description box.
+        run = [rows[0]]
+        for y in rows[1:]:
+            if y != run[-1] + 1:
+                break
+            run.append(y)
+        line = (run[0] + run[-1]) / 2
+        checked += 1
+        if abs(by - line) > max(1.5, card["rect"][3] * 0.003):
+            result.fail(f"{badge['item_id']}: badge middle at y={by:.1f}, border line at y={line:.1f}")
+    result.note(f"badges on the inner border: {checked} checked")
+
+
+def check_badge_rim(result, view, shot, context_type):
+    """A badge's dark rim must be as thick on its slanted ends as on its top edge."""
+    image = Image.open(shot).convert("RGB")
+    lum = lambda px, py: sum(image.getpixel((int(px), int(py)))) / 3
+    badge = next((b for b in view["badges"] if b["visible"] and in_context(b, context_type)
+                  and fully_inside(b["rect"], view["window"])), None)
+    if badge is None:
+        return
+    x, y, w, h = badge["rect"]
+    face = lum(x + w / 2, y + h * 0.2)
+
+    def rim(points):
+        # The run of samples (0.25 px apart) in the rim's colour, the darkest along the way;
+        # the background next to the badge can be nearly as dark, so match closely.
+        values = [lum(*p) for p in points]
+        darkest = min(values)
+        run = best = 0
+        for v in values:
+            run = run + 1 if abs(v - darkest) <= 3 else 0
+            best = max(best, run)
+        return best / 4
+
+    # Probe only the edge zone, not as far as the text and its dark outline.
+    n = int(h * 0.3 * 4)
+    top = rim([(x + w / 2, y - 1 + t / 4) for t in range(n)])
+    # Through the left tip, horizontally: an even rim of thickness t is t·√2 wide there
+    # (the inner tip sits t·√2 inside the outer one). Sampled at several rows around the
+    # tip's height to average out the polygon's pixel steps.
+    widths = [rim([(x - 1 + t / 4, y + h / 2 + dy) for t in range(n)]) for dy in (-0.5, 0, 0.5)]
+    tip = sum(widths) / len(widths)
+    slanted = tip / 2 ** 0.5
+    if abs(top - slanted) > 0.6:
+        result.fail(f"{badge['item_id']}: rim {top:.2f} px on top but {slanted:.2f} px on the slanted end")
+    result.note(f"rim: {top:.2f} px top, {slanted:.2f} px slanted")
+
+
+def check_badges_on_box_top(result, view, shot):
+    """An ancient option badge's pointed ends (its vertical middle) must sit on the option
+    box's visible top edge: where the dark box starts beside the badge."""
+    image = Image.open(shot).convert("RGB")
+    checked = 0
+    for badge in view["badges"]:
+        if not (badge["visible"] and in_context(badge, "NEventOptionButton")):
+            continue
+        bx, by = centre(badge["rect"])
+        x = int(badge["rect"][0] - 20)
+        lum = lambda y: sum(image.getpixel((x, y))) / 3
+        rows = range(int(by - badge["rect"][3]), int(by + badge["rect"][3]))
+        # The box top is where it gets darkest fastest, going down.
+        drop, edge = max((lum(y - 3) - lum(y + 1), y) for y in rows)
+        if drop < 8:
+            result.fail(f"{badge['item_id']}: no box edge found beside the badge")
+            continue
+        checked += 1
+        if abs(by - edge) > 3:
+            result.fail(f"{badge['item_id']}: badge middle at y={by:.1f}, box top at y={edge}")
+    result.note(f"badges on the option box tops: {checked} checked")
 
 
 def check_tooltip_layering(result, view, tiers, shot):
@@ -362,16 +581,16 @@ ICON_TYPES = {"NRelic", "NPotion"}
 
 def badge_distance(badge, item):
     """Distance from the badge's centre to its spot on the item: inside the bottom edge of a
-    card, across the top edge of an icon, inside the right edge of a button (top right for
-    ancient options)."""
+    card, across the bottom edge of an icon, across the top edge of an ancient option, inside
+    the right edge of a loot button."""
     bx, by = centre(badge)
     x, y, w, h = item["rect"]
     if item["type"] == "NEventOptionButton":
-        spot = (x + w - badge[2] / 2, y + badge[3])
+        spot = (x + w / 2, y + h * 0.085)  # the visible box top
     elif item["type"] in BUTTON_TYPES:
         spot = (x + w - badge[2] / 2, y + h / 2)
     elif item["type"] in ICON_TYPES:
-        spot = (x + w / 2, y)
+        spot = (x + w / 2, y + h)
     else:
         spot = (x + w / 2, y + h - badge[3])
     return abs(bx - spot[0]) + abs(by - spot[1])
@@ -425,6 +644,7 @@ def scenario_card_reward(result, tiers):
     cards = [c for c in view["cards"] if c["on_screen"] and in_context(c, "NCardRewardSelectionScreen")]
     for n, card in enumerate(cards):
         check_tip(result, tiers, card)
+        time.sleep(1.0)  # tips fade in; judge layering once they are opaque
         shot = screenshot(f"card_reward_hover{n}")
         result.screenshots.append(shot)
         check_tooltip_layering(result, inspect(), tiers, shot)
@@ -483,12 +703,46 @@ def scenario_shop_relics(result, tiers):
     """Shop inventory: relics and potions."""
     view, shot = open_shop("shop_relics")
     result.screenshots.append(shot)
+    exhausted_relics(result, view, "NMerchantInventory")
+    check_prices_clear(result)
     check_badges(result, view, tiers, "relics", "NMerchantInventory", types=ICON_TYPES)
     check_badges(result, view, tiers, "potions", "NMerchantInventory", types=ICON_TYPES)
     relics = [r for r in view["relics"] if in_context(r, "NMerchantInventory") and tiers.get(r["id"], card=False)]
     if relics:
         check_tip(result, tiers, relics[0], "shop_relic_tip")
     hover(10, 10)
+
+
+def walk(node):
+    yield node
+    for child in node.get("children", []):
+        yield from walk(child)
+
+
+def check_prices_clear(result):
+    """Shop relic and potion badges must not cover the price below them."""
+    checked = 0
+    for slot in walk(tree("NMerchantInventory", 9)):
+        if slot["type"] not in ("NMerchantRelic", "NMerchantPotion") or not slot.get("visible"):
+            continue
+        badge = find_node(slot, "TierListOverlayBadge")
+        cost = find_node(slot, "Cost")
+        if not (badge and cost and badge.get("visible")):
+            continue
+        checked += 1
+        if intersection(badge["rect"], cost["rect"]):
+            result.fail(f"{slot['name']}: badge covers the price ({[round(v) for v in badge['rect']]} vs {[round(v) for v in cost['rect']]})")
+    result.note(f"prices clear of badges: {checked} slots checked")
+
+
+class RunExhausted(CheckError):
+    """The test run has used up its relics; main() starts a fresh run and retries."""
+
+
+def exhausted_relics(result, view, context_type):
+    relics = [r["id"] for r in view["relics"] if in_context(r, context_type)]
+    if relics and all(r == "CIRCLET" for r in relics):
+        raise RunExhausted("only Circlets on offer: this test run has used up its relics")
 
 
 def scenario_treasure(result, tiers):
@@ -515,6 +769,7 @@ def scenario_elite_loot(result, tiers):
     time.sleep(1.5)
     view = inspect()
     result.screenshots.append(screenshot("elite_loot"))
+    exhausted_relics(result, view, "NRewardsScreen")
     check_badges(result, view, tiers, "relics", "NRewardsScreen", types=BUTTON_TYPES)
     if any(i["type"] == "NRewardButton" for i in view["potions"]):
         check_badges(result, view, tiers, "potions", "NRewardsScreen", types=BUTTON_TYPES)
@@ -537,9 +792,13 @@ def scenario_ancient(result, tiers):
         time.sleep(1.5)
     wait_state("event")
     time.sleep(2)
+    hover(10, 10)
+    time.sleep(0.5)
     view = inspect()
-    result.screenshots.append(screenshot("ancient"))
+    shot = screenshot("ancient")
+    result.screenshots.append(shot)
     check_badges(result, view, tiers, "relics", "NEventRoom", types=BUTTON_TYPES)
+    check_badges_on_box_top(result, view, shot)
     options = [r for r in view["relics"] if r["type"] == "NEventOptionButton" and fully_inside(r["rect"], view["window"])]
     if options:
         check_tip(result, tiers, options[0], "ancient_tip")
@@ -627,12 +886,21 @@ def scenario_deck_view(result, tiers):
     """Deck view from the top bar."""
     ensure_test_run()
     leave_screens()
-    call("NTopBarDeckButton", "OnRelease")
-    time.sleep(1.5)
-    view = inspect()
-    result.screenshots.append(screenshot("deck_view"))
-    check_badges(result, view, tiers, "cards", "NDeckViewScreen")
-    call("NTopBarDeckButton", "OnRelease")
+    # The run's top bar may still be loading; the deck may still be open from a failed run.
+    if not any(in_context(c, "NDeckViewScreen") for c in inspect()["cards"]):
+        wait_for(lambda: _try_call("NTopBarDeckButton", "OnRelease"), "the deck button")
+        time.sleep(1.5)
+    try:
+        hover(10, 10)
+        time.sleep(0.5)
+        view = inspect()
+        shot = screenshot("deck_view")
+        result.screenshots.append(shot)
+        check_badges(result, view, tiers, "cards", "NDeckViewScreen")
+        check_badges_on_border(result, view, shot, "NDeckViewScreen")
+        check_badge_rim(result, view, shot, "NDeckViewScreen")
+    finally:
+        call("NTopBarDeckButton", "OnRelease")
 
 
 def scenario_bundle(result, tiers):
@@ -688,15 +956,8 @@ SETTING_KEYS = ("use_jorbs", "card_choices", "deck_screens", "relics", "hover_ti
 def open_settings():
     """Opens the game's settings screen through the pause menu and returns its node tree."""
 
-    def press_pause():
-        try:
-            return call("NTopBarPauseButton", "OnRelease")
-        except CheckError as e:
-            if "no NTopBarPauseButton" not in str(e):  # the run's top bar is still loading
-                raise
-            return None
-
-    wait_for(press_pause, "the pause button")
+    # The run's top bar may still be loading.
+    wait_for(lambda: _try_call("NTopBarPauseButton", "OnRelease"), "the pause button")
     time.sleep(1.5)
     click(find_node(tree("NPauseMenu", 3), "Settings")["rect"])
     time.sleep(1.5)
@@ -810,6 +1071,7 @@ def main():
     parser.add_argument("scenarios", nargs="*", help="scenarios to run (default: all)")
     parser.add_argument("--list", action="store_true", help="list scenarios")
     parser.add_argument("-v", "--verbose", action="store_true", help="show notes for passing scenarios")
+    parser.add_argument("--new-run", action="store_true", help="abandon the test run first and start a fresh one")
     args = parser.parse_args()
     if args.list:
         for name, fn in SCENARIOS.items():
@@ -821,11 +1083,19 @@ def main():
         sys.exit(f"unknown scenario(s): {', '.join(unknown)}")
 
     tiers = TierLists()
+    if args.new_run:
+        new_test_run()
     results = []
     for name in names:
         result = Result(name)
         try:
-            SCENARIOS[name](result, tiers)
+            try:
+                SCENARIOS[name](result, tiers)
+            except RunExhausted as e:
+                print(f"     ↻ {e}; starting a fresh test run")
+                new_test_run()
+                result = Result(name)
+                SCENARIOS[name](result, tiers)
         except (CheckError, OSError, StopIteration, KeyError) as e:
             result.fail(f"setup error: {type(e).__name__}: {e}")
         results.append(result)

@@ -84,6 +84,8 @@ public static class TierListOverlayMod
             {
                 var (itemId, placement, bounds) = Describe(node);
                 Badges.Sync(node, Lookup(characterId, itemId, node is NCard), bounds, placement, node is NCard && HasAncestor<NDeckUpgradeSelectScreen>(node));
+                if (node is NRelic or NPotion)
+                    MakeRoomForBadge(node);
             }
             catch (Exception ex)
             {
@@ -112,17 +114,17 @@ public static class TierListOverlayMod
             return (on ? card.Model?.Id.Entry : null, Placement.InsideBottom, CardBounds);
         }
         if (!Settings.Relics)
-            return (null, Placement.AcrossTop, own);
+            return (null, Placement.AcrossBottom, own);
         return node switch
         {
             NRelic relic when HasAncestor<NMerchantInventory>(relic) || HasAncestor<NTreasureRoomRelicCollection>(relic) || HasAncestor<NChooseARelicSelection>(relic)
-                => (relic.Model.Id.Entry, Placement.AcrossTop, own),
-            NPotion potion when HasAncestor<NMerchantInventory>(potion) => (potion.Model.Id.Entry, Placement.AcrossTop, own),
+                => (relic.Model.Id.Entry, Placement.AcrossBottom, own),
+            NPotion potion when HasAncestor<NMerchantInventory>(potion) => (potion.Model.Id.Entry, Placement.AcrossBottom, own),
             // Elite and event loot: the relic or potion is only an icon on the button.
             NRewardButton { Reward: RelicReward r } => (r.Relic?.Id.Entry, Placement.RightEdge, own),
             NRewardButton { Reward: PotionReward p } => (p.Potion?.Id.Entry, Placement.RightEdge, own),
             // Ancients (Neow, Darv, …) offer relics as event options.
-            NEventOptionButton option => (option.Option?.Relic?.Id.Entry, Placement.TopRight, own),
+            NEventOptionButton option => (option.Option?.Relic?.Id.Entry, Placement.TopCentre, own),
             _ => (null, Placement.InsideBottom, own),
         };
     }
@@ -156,6 +158,31 @@ public static class TierListOverlayMod
             GD.PrintErr($"[TierListOverlay] Checking tier list IDs failed: {ex.Message}");
             return false;
         }
+    }
+
+    // In the shop a relic's or potion's price sits right below the icon, where the badge goes;
+    // move it down while there is a badge.
+    private const string CostOffsetMeta = "tierlist_cost_offset";
+
+    private static void MakeRoomForBadge(Control icon)
+    {
+        var slot = icon.GetParent()?.GetParent() as NMerchantSlot;
+        if (slot?.GetNodeOrNull<Control>("Cost") is not { } cost)
+            return;
+        var badge = icon.GetNodeOrNull<Control>(Badges.BadgeName);
+        var offset = 0f;
+        if (badge != null)
+        {
+            // The badge's height in the slot's units, minus the part that overlaps the icon,
+            // plus a small gap.
+            var scale = badge.GetGlobalTransform().Scale.Y / slot.GetGlobalTransform().Scale.Y;
+            offset = Mathf.Round(badge.Size.Y * scale * 0.5f + 4);
+        }
+        var applied = cost.HasMeta(CostOffsetMeta) ? cost.GetMeta(CostOffsetMeta).AsSingle() : 0f;
+        if (Mathf.IsEqualApprox(offset, applied))
+            return;
+        cost.Position += new Vector2(0, offset - applied);
+        cost.SetMeta(CostOffsetMeta, offset);
     }
 
     private static (string Id, TierEntry Entry)? Lookup(string? characterId, string? itemId, bool isCard)
