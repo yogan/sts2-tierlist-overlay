@@ -186,17 +186,28 @@ def in_context(item, context_type):
 
 
 def check_badges(result, view, tiers, kind, context_type):
-    """Every on-screen item of `kind` below `context_type` must show its tier badge."""
+    """Every fully visible item of `kind` below `context_type` must show its tier badge."""
     tiers.character = view["character"]
+    window = view["window"]
     items = [i for i in view[kind] if i["on_screen"] and in_context(i, context_type)]
     if not items:
         result.fail(f"no {kind} found on screen in {context_type}")
         return
-    badges = [b for b in view["badges"] if b["visible"] and b["on_screen"]]
+    # Each badge belongs to the item whose badge spot is nearest, so badges of stacked items
+    # (card bundles) are not counted for the item in front. Judge by position, not by ID: a
+    # badge left over from another card must not count.
+    owners = {}
+    for badge in view["badges"]:
+        if not (badge["visible"] and badge["on_screen"]):
+            continue
+        nearest = min(items, key=lambda i: badge_distance(badge["rect"], i["rect"]))
+        if badge_belongs_to(badge["rect"], nearest["rect"]):
+            owners.setdefault(id(nearest), []).append(badge)
     for item in items:
+        if not fully_inside(item["rect"], window):
+            continue
         expected = tiers.get(item["id"])
-        # Judge by position, not by ID: a badge left over from another card must not count.
-        near = [b for b in badges if badge_belongs_to(b["rect"], item["rect"])]
+        near = owners.get(id(item), [])
         if expected is None:
             result.note(f"{item['id']}: not in tier list")
             if near:
@@ -235,9 +246,19 @@ def check_tooltip_layering(result, view, tiers, shot):
 # --- Geometry and pixels ------------------------------------------------------------------
 
 def badge_belongs_to(badge, item):
-    """The badge is horizontally within the item and sits at or just above its top edge."""
-    bx = badge[0] + badge[2] / 2
-    return item[0] <= bx <= item[0] + item[2] and item[1] - 2 * badge[3] <= badge[1] <= item[1] + item[3] / 2
+    """The badge's centre lies within the item's lower half (the badge sits at its bottom edge)."""
+    bx, by = centre(badge)
+    return item[0] <= bx <= item[0] + item[2] and item[1] + item[3] / 2 <= by <= item[1] + item[3]
+
+
+def badge_distance(badge, item):
+    """Distance from the badge's centre to where the mod puts it: centred, at the bottom edge."""
+    bx, by = centre(badge)
+    return abs(bx - (item[0] + item[2] / 2)) + abs(by - (item[1] + item[3] - badge[3]))
+
+
+def fully_inside(rect, window):
+    return rect[0] >= 0 and rect[1] >= 0 and rect[0] + rect[2] <= window[0] and rect[1] + rect[3] <= window[1]
 
 
 def overlaps(a, b, margin=0):
@@ -317,24 +338,139 @@ def scenario_choose_a_card(result, tiers):
     console("win")
 
 
-def scenario_shop(result, tiers):
-    """Shop inventory: cards, relics and potions."""
+def open_shop(name):
     ensure_test_run()
+    leave_screens()
     console("room Shop")
     wait_state("shop")
     call("NMerchantRoom", "OpenInventory")
     time.sleep(1.5)
     view = inspect()
-    result.screenshots.append(screenshot("shop"))
+    return view, screenshot(name)
+
+
+def scenario_shop(result, tiers):
+    """Shop inventory: cards."""
+    view, shot = open_shop("shop")
+    result.screenshots.append(shot)
     check_badges(result, view, tiers, "cards", "NMerchantInventory")
+
+
+def scenario_shop_relics(result, tiers):
+    """Shop inventory: relics and potions."""
+    view, shot = open_shop("shop_relics")
+    result.screenshots.append(shot)
     check_badges(result, view, tiers, "relics", "NMerchantInventory")
     check_badges(result, view, tiers, "potions", "NMerchantInventory")
+
+
+def leave_screens():
+    """Back to a neutral state: no overlay screen left open from an earlier scenario."""
+    s = state()
+    if s["state_type"] == "card_select" and s["card_select"].get("can_cancel"):
+        act("cancel_selection")
+
+
+def grid_from_relic(result, tiers, relic, context, picks, name):
+    """Picks up a relic whose pickup opens a deck grid, checks the grid, then finishes the
+    selection with the first `picks` cards and removes the relic again."""
+    ensure_test_run()
+    leave_screens()
+    console(f"relic add {relic}")
+    wait_state("card_select")
+    time.sleep(1.5)
+    view = inspect()
+    result.screenshots.append(screenshot(name))
+    check_badges(result, view, tiers, "cards", context)
+    for i in range(picks):
+        act("select_card", index=i)
+    act("confirm_selection")
+    time.sleep(1.5)
+    if state()["state_type"] == "card_select":  # a confirmation preview
+        act("confirm_selection")
+    console(f"relic remove {relic}")
+
+
+def scenario_transform(result, tiers):
+    """Transform grid (Astrolabe: transform 3 cards)."""
+    grid_from_relic(result, tiers, "ASTROLABE", "NDeckTransformSelectScreen", 3, "transform")
+
+
+def scenario_enchant(result, tiers):
+    """Enchant grid (Royal Stamp: enchant 1 card)."""
+    grid_from_relic(result, tiers, "ROYAL_STAMP", "NDeckEnchantSelectScreen", 1, "enchant")
+
+
+def scenario_remove(result, tiers):
+    """Card removal grid (Precise Scissors). Adds a card first so the deck keeps its size."""
+    ensure_test_run()
+    console("card BATTLE_TRANCE Deck")
+    grid_from_relic(result, tiers, "PRECISE_SCISSORS", "NDeckCardSelectScreen", 1, "remove")
+
+
+def scenario_simple_grid(result, tiers):
+    """Card choice grid offered as a reward (Sea Glass: cards from another character)."""
+    grid_from_relic(result, tiers, "SEA_GLASS", "NSimpleCardSelectScreen", 0, "simple_grid")
+
+
+def scenario_upgrade(result, tiers):
+    """Upgrade grid at a rest site (Smith)."""
+    ensure_test_run()
+    leave_screens()
+    console("room RestSite")
+    s = wait_state("rest_site")
+    option = next(o for o in s["rest_site"]["options"] if o["id"] == "SMITH")
+    act("choose_rest_option", index=option["index"])
+    wait_state("card_select")
+    time.sleep(1.5)
+    view = inspect()
+    result.screenshots.append(screenshot("upgrade"))
+    check_badges(result, view, tiers, "cards", "NDeckUpgradeSelectScreen")
+    act("cancel_selection")
+
+
+def scenario_deck_view(result, tiers):
+    """Deck view from the top bar."""
+    ensure_test_run()
+    leave_screens()
+    call("NTopBarDeckButton", "OnRelease")
+    time.sleep(1.5)
+    view = inspect()
+    result.screenshots.append(screenshot("deck_view"))
+    check_badges(result, view, tiers, "cards", "NDeckViewScreen")
+    call("NTopBarDeckButton", "OnRelease")
+
+
+def scenario_bundle(result, tiers):
+    """Bundle choice (Scroll Boxes: pick one of two card packs)."""
+    ensure_test_run()
+    leave_screens()
+    console("relic add SCROLL_BOXES")
+    time.sleep(2.5)
+    view = inspect()
+    result.screenshots.append(screenshot("bundle"))
+    check_badges(result, view, tiers, "cards", "NChooseABundleSelectionScreen")
+    act("select_bundle", index=0)
+    time.sleep(1.5)
+    result.note("pack preview:")
+    result.screenshots.append(screenshot("bundle_preview"))
+    check_badges(result, inspect(), tiers, "cards", "NChooseABundleSelectionScreen")
+    act("confirm_bundle_selection")
+    console("relic remove SCROLL_BOXES")
 
 
 SCENARIOS = {
     "card_reward": scenario_card_reward,
     "choose_a_card": scenario_choose_a_card,
     "shop": scenario_shop,
+    "shop_relics": scenario_shop_relics,
+    "upgrade": scenario_upgrade,
+    "transform": scenario_transform,
+    "enchant": scenario_enchant,
+    "remove": scenario_remove,
+    "simple_grid": scenario_simple_grid,
+    "bundle": scenario_bundle,
+    "deck_view": scenario_deck_view,
 }
 
 
