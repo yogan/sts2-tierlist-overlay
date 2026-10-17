@@ -1,0 +1,20 @@
+#!/bin/sh
+# Guardrail before every commit: both mods build and the Python tools compile.
+# The behavioural checks (tools/check.py) need the running game, so they stay manual.
+# Enable once per clone: git config core.hooksPath .githooks
+set -eu
+repo="$(git rev-parse --show-toplevel)"
+export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
+
+for proj in "$repo/TierListOverlay.csproj" "$repo/tools/DevTools/DevTools.csproj"; do
+    if ! out="$(dotnet build "$proj" -c Release 2>&1)"; then
+        printf '%s\n' "$out" | grep -E 'error|warn' >&2 || printf '%s\n' "$out" >&2
+        echo "pre-commit: build failed: $proj" >&2
+        exit 1
+    fi
+done
+
+# ast.parse rather than py_compile, which leaves __pycache__ behind.
+python3 -c 'import ast, sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' \
+    "$repo/tools/check.py" "$repo/tools/dev.py" "$repo/tools/autopilot.py" ||
+    { echo "pre-commit: Python syntax error" >&2; exit 1; }
