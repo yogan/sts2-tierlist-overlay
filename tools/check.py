@@ -446,6 +446,9 @@ def check_tip(result, tiers, item, shot_name=None):
         result.fail(f"{item['id']}: tip has a double space or blank line: {text[:120]!r}")
     elif expected.good_upgrade != ("[color=#7fff00]good upgrade[/color]" in (tips[0]["bbcode"] or "").lower()):
         result.fail(f"{item['id']}: good_upgrade={expected.good_upgrade}, but tip reads {tips[0]['bbcode']!r}")
+    elif share_covered(item["rect"], tips[0]["rect"]) > 0.05:
+        result.fail(f"{item['id']}: tip covers {share_covered(item['rect'], tips[0]['rect']):.0%} of the item "
+                    f"(tip {[round(v) for v in tips[0]['rect']]}, item {[round(v) for v in item['rect']]})")
     elif not fully_inside(tips[0]["rect"], view["window"]):
         result.fail(f"{item['id']}: tip runs off screen at {[round(v) for v in tips[0]['rect']]}")
     else:
@@ -602,6 +605,12 @@ def fully_inside(rect, window):
 
 def overlaps(a, b, margin=0):
     return a[0] < b[0] + b[2] + margin and b[0] - margin < a[0] + a[2] and a[1] < b[1] + b[3] + margin and b[1] - margin < a[1] + a[3]
+
+
+def share_covered(rect, cover):
+    """How much of rect lies under cover (0 to 1)."""
+    region = intersection(rect, cover)
+    return (region[2] - region[0]) * (region[3] - region[1]) / (rect[2] * rect[3]) if region and rect[2] * rect[3] else 0.0
 
 
 def intersection(a, b):
@@ -800,8 +809,11 @@ def scenario_ancient(result, tiers):
     check_badges(result, view, tiers, "relics", "NEventRoom", types=BUTTON_TYPES)
     check_badges_on_box_top(result, view, shot)
     options = [r for r in view["relics"] if r["type"] == "NEventOptionButton" and fully_inside(r["rect"], view["window"])]
-    if options:
-        check_tip(result, tiers, options[0], "ancient_tip")
+    # Each option: relics with keyword tips and without get their tips laid out differently.
+    for i, option in enumerate(options):
+        check_tip(result, tiers, option, f"ancient_tip_{i}")
+        hover(10, 10)
+        time.sleep(0.3)
     hover(10, 10)
 
 

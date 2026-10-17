@@ -96,6 +96,12 @@ internal static class Tips
         tip.GetNode<TextureRect>("%Icon").Texture = null;
         tip.ResetSize();
         // The game sizes the container itself as it adds tips (NHoverTipSet.Init).
+        var widened = 360f - container.Size.X;
         container.Size = new Vector2(360f, container.Size.Y + tip.Size.Y + 5f);
+        // Tips shown left of their owner (ReverseFill, NHoverTipSet.SetAlignment) were moved
+        // left by the container's width before the added tip widened it, which is none for
+        // items without keyword tips; the tip would then cover the item.
+        if (container is FlowContainer { ReverseFill: true } && widened > 0)
+            container.Position += Vector2.Left * widened;
     }
 }
