@@ -6,9 +6,6 @@
     <LangVersion>12.0</LangVersion>
     <AssemblyName>DevTools</AssemblyName>
     <RootNamespace>DevTools</RootNamespace>
-    <STS2GameDir Condition="'$(STS2GameDir)' == ''">$(HOME)/Library/Application Support/Steam/steamapps/common/Slay the Spire 2</STS2GameDir>
-    <STS2GameDataDir Condition="'$(STS2GameDataDir)' == ''">$(STS2GameDir)/SlayTheSpire2.app/Contents/Resources/data_sts2_macos_arm64</STS2GameDataDir>
-    <STS2ModsDir>$(STS2GameDir)/SlayTheSpire2.app/Contents/MacOS/mods/$(AssemblyName)</STS2ModsDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -23,8 +20,8 @@
   </ItemGroup>
 
   <Target Name="InstallMod" AfterTargets="Build" Condition="'$(Install)' == 'true'">
-    <MakeDir Directories="$(STS2ModsDir)" />
-    <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)/DevTools.json" DestinationFolder="$(STS2ModsDir)" />
-    <Message Importance="high" Text="Installed to $(STS2ModsDir)" />
+    <MakeDir Directories="$(STS2ModsDir)/$(AssemblyName)" />
+    <Copy SourceFiles="$(TargetPath);$(MSBuildProjectDirectory)/DevTools.json" DestinationFolder="$(STS2ModsDir)/$(AssemblyName)" />
+    <Message Importance="high" Text="Installed to $(STS2ModsDir)/$(AssemblyName)" />
   </Target>
 </Project>

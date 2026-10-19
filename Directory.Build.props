@@ -1,0 +1,29 @@
+<Project>
+  <!--
+    Where the game is, for both mods (this one and tools/DevTools). Defaults are Steam's default
+    install per OS; override any of them with -p:Name=value. Only macOS is tested; the Windows and
+    Linux paths follow Steam's and Godot's conventions.
+    STS2GameDir: the game's install folder.
+    STS2GameDataDir: the folder with sts2.dll and GodotSharp.dll, which the mods build against.
+    STS2ModsDir: the game's mods folder, next to its executable; each mod installs to a subfolder.
+  -->
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <STS2GameDir Condition="'$(STS2GameDir)' == ''">$(HOME)/Library/Application Support/Steam/steamapps/common/Slay the Spire 2</STS2GameDir>
+    <STS2GameDataDir Condition="'$(STS2GameDataDir)' == ''">$(STS2GameDir)/SlayTheSpire2.app/Contents/Resources/data_sts2_macos_arm64</STS2GameDataDir>
+    <STS2ModsDir Condition="'$(STS2ModsDir)' == ''">$(STS2GameDir)/SlayTheSpire2.app/Contents/MacOS/mods</STS2ModsDir>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <STS2GameDir Condition="'$(STS2GameDir)' == ''">C:\Program Files (x86)\Steam\steamapps\common\Slay the Spire 2</STS2GameDir>
+    <STS2GameDataDir Condition="'$(STS2GameDataDir)' == ''">$(STS2GameDir)\data_sts2_windows_x86_64</STS2GameDataDir>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <STS2GameDir Condition="'$(STS2GameDir)' == ''">$(HOME)/.local/share/Steam/steamapps/common/Slay the Spire 2</STS2GameDir>
+    <STS2GameDataDir Condition="'$(STS2GameDataDir)' == ''">$(STS2GameDir)/data_sts2_linuxbsd_x86_64</STS2GameDataDir>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <STS2ModsDir Condition="'$(STS2ModsDir)' == ''">$(STS2GameDir)/mods</STS2ModsDir>
+  </PropertyGroup>
+</Project>
