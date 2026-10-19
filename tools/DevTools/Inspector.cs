@@ -21,6 +21,9 @@ internal static class Inspector
     // Groups the tier list overlay mod puts its badges and hover tips into.
     private const string BadgeGroup = "tierlist_badge";
     private const string TipGroup = "tierlist_tip";
+    private const string StatsTipGroup = "tierlist_stats_tip";
+    private const string HintGroup = "tierlist_hint";
+    private const string TipBadgeName = "TierListOverlayTipBadge";
 
     public static Dictionary<string, object?> Inspect()
     {
@@ -40,7 +43,7 @@ internal static class Inspector
             {
                 // NCard rather than NCardHolder: shop cards have no holder.
                 case NCard card:
-                    // The card frame is the visible card; NCard itself has no size and other
+                    // The card frame is the visible card. NCard itself has no size and other
                     // children (glow, hitbox) extend far beyond the card.
                     cards.Add(Describe(card, card.Model?.Id.Entry, toWindow, CardFrameField?.GetValue(card) as Control));
                     break;
@@ -62,7 +65,7 @@ internal static class Inspector
                     break;
                 case NHoverTipSet tips:
                     // The set stays at the origin and positions its tip containers instead. Each
-                    // tip is reported as its panel; its textures reach a little further with a
+                    // tip is reported as its panel. Its textures reach a little further with a
                     // transparent shadow margin, where things behind still show.
                     foreach (var container in tips.GetChildren().OfType<Control>())
                     {
@@ -84,6 +87,7 @@ internal static class Inspector
                 ["item_id"] = badge.GetMeta("item_id", "").AsString(),
                 ["tier"] = badge.GetMeta("tier", "").AsString(),
                 ["label"] = badge.GetMeta("label", "").AsString(),
+                ["kind"] = badge.GetMeta("kind", "").AsString(),
                 ["visible"] = badge.IsVisibleInTree(),
                 ["rect"] = rect,
                 ["on_screen"] = OnScreen(rect),
@@ -91,7 +95,7 @@ internal static class Inspector
             };
         }).ToList();
 
-        var tierTips = tree.GetNodesInGroup(TipGroup).OfType<Control>().Select(tip => new Dictionary<string, object?>
+        List<Dictionary<string, object?>> Tips(string group) => tree.GetNodesInGroup(group).OfType<Control>().Select(tip => new Dictionary<string, object?>
         {
             ["item_id"] = tip.GetMeta("item_id", "").AsString(),
             ["visible"] = tip.IsVisibleInTree(),
@@ -99,7 +103,11 @@ internal static class Inspector
             ["title"] = (tip.FindChild("Title", true, false) as Label)?.Text,
             ["text"] = (tip.FindChild("Description", true, false) as RichTextLabel)?.GetParsedText(),
             ["bbcode"] = (tip.FindChild("Description", true, false) as RichTextLabel)?.Text,
+            // The tier badge in the tip's top right corner.
+            ["badge"] = (tip.FindChild(TipBadgeName, true, false) as Control)?.GetMeta("label", "").AsString(),
+            ["badge_rect"] = tip.FindChild(TipBadgeName, true, false) is Control tipBadge ? Rect(tipBadge, toWindow) : null,
         }).ToList();
+        var hints = tree.GetNodesInGroup(HintGroup).OfType<Label>().Where(l => l.IsVisibleInTree()).Select(l => l.Text).ToList();
 
         var windowSize = DisplayServer.WindowGetSize();
         var runState = MegaCrit.Sts2.Core.Runs.RunManager.Instance?.DebugOnlyGetState();
@@ -112,7 +120,9 @@ internal static class Inspector
             ["potions"] = potions,
             ["badges"] = badges,
             ["hover_tips"] = hoverTips,
-            ["tier_tips"] = tierTips,
+            ["tier_tips"] = Tips(TipGroup),
+            ["stats_tips"] = Tips(StatsTipGroup),
+            ["hints"] = hints,
         };
     }
 
@@ -158,10 +168,19 @@ internal static class Inspector
             d["rect"] = ToArray(OwnRect(c, toWindow));
         }
         // Many game nodes expose their state as a State property (e.g. an epoch slot's
-        // NotObtained/Obtained/Complete); report it so tools can tell such nodes apart.
+        // NotObtained/Obtained/Complete). Report it so tools can tell such nodes apart.
         var state = node.Get("State");
         if (state.VariantType != Variant.Type.Nil)
             d["state"] = state.ToString();
+        if (node is MegaCrit.Sts2.Core.Nodes.GodotExtensions.NClickableControl clickable)
+            d["enabled"] = clickable.IsEnabled;
+        // What an image shows and how it is tinted, to tell look-alike nodes apart.
+        if (node is TextureRect { Texture: { } texture })
+            d["texture"] = texture.ResourcePath;
+        if (node is CanvasItem item && (item.SelfModulate != Colors.White || item.Material is ShaderMaterial))
+            d["tint"] = $"{item.SelfModulate.ToHtml()} {(item.Material as ShaderMaterial)?.Shader?.ResourcePath}"
+                + (item.Material is ShaderMaterial hsv && hsv.Shader?.ResourcePath.EndsWith("hsv.gdshader") == true
+                    ? $" h={hsv.GetShaderParameter("h")} s={hsv.GetShaderParameter("s")} v={hsv.GetShaderParameter("v")}" : "");
         if (node is Label l)
             d["text"] = l.Text;
         else if (node is RichTextLabel r)

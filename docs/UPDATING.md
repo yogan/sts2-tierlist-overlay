@@ -2,25 +2,33 @@
 
 ## After a game update
 
-Steam updates the game without asking; the mod keeps running as long as the game still has
+Steam updates the game without asking, but the mod keeps running as long as the game still has
 what it uses. At startup the mod logs `Last tested on game vX, this is vY` when the installed
 version differs from `TestedGameVersion` (`TierListOverlayMod.cs`), and `check.py lists`
 fails until that constant is raised. The routine:
 
 1. `tools/reload.sh` rebuilds both mods against the new `sts2.dll`. A compile error means
    the game renamed or removed a type or member the code names directly.
-2. `tools/check.py --new-run`. What can break without a compile error, and the check that
-   notices:
-   - Reflection on private game members (`Tips.cs`: `NHoverTipSet._owner`,
-     `_textHoverTipContainer`, `CorrectVerticalOverflow`, `CorrectHorizontalOverflow`): tips
-     silently stop appearing or run off screen (`check_tip`).
-   - Node names and scene paths (`SettingsUi.cs`: `%GeneralSettings`, `ShowRunTimer`,
-     `SettingsTickbox`; `Badges.cs`: `TitleLabel`; the shop slot's `Cost`; `Tips.cs`:
-     `res://scenes/ui/hover_tip.tscn`): the settings rows log "layout changed", other
-     features quietly drop out (`settings`, `shop_relics`).
-   - Constants measured on the game's textures (`Badges.cs`: the card border line at 28.6 of
-     422 units, the ancient box edge at 8.5%; the shop slot scale 0.65): badges land off the
-     border (`deck_view`, `ancient`, `shop_relics`).
+2. `tools/check.py --new-run`, then `tools/check.py --full-size deck_view` (in the window the
+   tools use, the badge rims are too thin to measure). What can break without a compile
+   error, and the check that notices:
+   - Reflection on private game members: `NHoverTipSet._owner`, `_textHoverTipContainer`,
+     `CorrectVerticalOverflow` and `CorrectHorizontalOverflow` in `Tips.cs` (tips stop
+     appearing or run off screen, `check_tip`), `NSettingsTabManager._tabs` and `SwitchTabTo`
+     and `NPaginator._options`, `_currentIndex` and `_label` in `SettingsUi.cs` (no Tier List
+     tab, `settings`), `NCardRewardSelectionScreen._options` and `_extraOptions` and
+     `NCardGridSelectionScreen._cards` in `TierListOverlayMod.cs` (no stats on card rewards,
+     Skip or upgrades, `stats_card_reward`, `stats_upgrade`).
+   - Node names and scene paths: the General tab rows the Tier List tab copies
+     (`%GeneralSettings`, `ShowRunTimer`, `Screenshake`, `SendFeedback` with `FeedbackButton`,
+     `ShowTimerDivider`, the Reset Gameplay button's `Image`) and the `Input` tab in
+     `SettingsUi.cs`, `TitleLabel` in `Badges.cs`, the shop slot's `Cost` and the card removal
+     slot's `Hitbox`, `res://scenes/ui/hover_tip.tscn` in `Tips.cs`. The settings log "layout
+     changed", other features quietly drop out (`settings`, `shop_relics`, `stats_shop`).
+   - Constants measured on the game's textures (the card border line at 28.6 of 422 units, the
+     ancient box edge at 8.5% and the Skip button's top edge at 14% in `Badges.cs`, the shop
+     slot scale 0.65): badges land off the border (`deck_view`, `ancient`, `shop_relics`,
+     `stats_card_reward`).
 3. When something fails, find out what changed in the game types the failing code uses.
 4. `check.py` drives the game through the STS2MCP mod. If its endpoints fail, update
    it from its `main` branch (releases lag behind the game), build with
@@ -32,10 +40,20 @@ fails until that constant is raised. The routine:
 
 - The mod fetches the lists at game start, for the installed game version, and caches them in
   `mods/TierListOverlay/cache/`. It refreshes when the cache is older than 6 hours, incomplete
-  or from another game version; a running game never reloads. To force a refresh, delete
+  or from another game version. A running game never reloads. To force a refresh, delete
   `cache/fetched.cfg` and restart the game.
-- Tiers, colours, commentary and new items come from the data; IDs the game does not know are
+- Tiers, colours, commentary and new items come from the data. IDs the game does not know are
   logged (`Unknown IDs in ...`).
 - In code (`TierLists.cs`, `Lists`): the 12 list UUIDs, one per author and character plus
   colorless. A new character, or a list Untapped replaces with a new UUID, needs an entry
   there.
+
+## Untapped.gg stats
+
+- The `stats_*` scenarios and `logged_out` need a login: log in once in the Tier List tab of the
+  game's settings (test profile 2). They compare the badges and tips with what the API answers
+  to the mod's own request (from the game log), so they also notice changes to the API.
+- `logged_out` logs out through the settings and restores the login from a copy of
+  `account.cfg`. It restarts the game twice.
+- The requests (`Stats.cs`) send the game's own IDs, act and room type. If an endpoint starts
+  failing, the game log has the HTTP status and the start of the answer.

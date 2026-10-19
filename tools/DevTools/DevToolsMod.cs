@@ -19,7 +19,10 @@ namespace DevTools;
 ///   GET  /screenshot?path=/abs/file.png   save the current frame as PNG
 ///   POST /mouse/move?x=..&amp;y=..            move the in-game mouse
 ///   POST /mouse/click?x=..&amp;y=..           left click at that position
-///   GET  /window                          window size in pixels
+///   GET  /window                          window size in pixels and mode
+///   POST /window/mode?mode=windowed       a window beside other apps, for watching while tools
+///                                         drive the game. mode=saved: back to the player's
+///                                         display setting. Neither is saved.
 ///   POST /console                         run the request body as a dev console command
 ///   GET  /inspect                         cards, relics, potions, badges and hover tips on screen
 ///   GET  /tree?type=NSettingsScreen&amp;depth=4  node subtree with types, rects and texts
@@ -94,7 +97,7 @@ public static class DevToolsMod
                 var file = q["path"] ?? throw new ArgumentException("missing path");
                 RunOnMainThread(() =>
                 {
-                    // The game stops drawing while its window is hidden; render a fresh frame.
+                    // The game stops drawing while its window is hidden, so render a fresh frame.
                     RenderingServer.ForceDraw(swapBuffers: false);
                     var image = ((SceneTree)Engine.GetMainLoop()).Root.GetTexture().GetImage();
                     var err = image.SavePng(file);
@@ -150,8 +153,23 @@ public static class DevToolsMod
             }
             case "/window":
             {
-                var size = RunOnMainThread(() => DisplayServer.WindowGetSize());
-                return $"{{\"width\": {size.X}, \"height\": {size.Y}}}";
+                var (size, mode) = RunOnMainThread(() => (DisplayServer.WindowGetSize(), DisplayServer.WindowGetMode()));
+                return $"{{\"width\": {size.X}, \"height\": {size.Y}, \"mode\": \"{mode}\"}}";
+            }
+            case "/window/mode":
+            {
+                var mode = q["mode"];
+                if (mode is not ("windowed" or "saved"))
+                    throw new ArgumentException("mode must be windowed or saved");
+                RunOnMainThread(() =>
+                {
+                    if (mode == "windowed")
+                        Watchable();
+                    else
+                        Saved();
+                    return 0;
+                });
+                return "{\"status\": \"ok\"}";
             }
             case "/mouse/move":
             case "/mouse/click":
@@ -177,7 +195,35 @@ public static class DevToolsMod
         }
     }
 
-    // Godot objects may only be touched on the main thread; wait there for the result.
+    // A 16:9 window of 60% of the screen's width (at least 1280 pixels), at the screen's top
+    // right, so the game can be watched beside other apps. The game's own display setting stays
+    // as it is. The game saves the window's size on quit only when that setting is windowed.
+    private static void Watchable()
+    {
+        var screen = DisplayServer.WindowGetCurrentScreen();
+        var area = DisplayServer.ScreenGetUsableRect(screen);
+        DisplayServer.WindowSetMode(DisplayServer.WindowMode.Windowed);
+        var width = Math.Min(area.Size.X, Math.Max(1280, area.Size.X * 6 / 10));
+        var size = new Vector2I(width, width * 9 / 16);
+        DisplayServer.WindowSetSize(size);
+        DisplayServer.WindowSetPosition(new Vector2I(area.End.X - size.X, area.Position.Y));
+    }
+
+    // Back to the player's setting, as the game applies it at start.
+    private static void Saved()
+    {
+        var settings = MegaCrit.Sts2.Core.Saves.SaveManager.Instance.SettingsSave;
+        if (settings.Fullscreen)
+        {
+            DisplayServer.WindowSetMode(DisplayServer.WindowMode.Fullscreen);
+            return;
+        }
+        DisplayServer.WindowSetMode(DisplayServer.WindowMode.Windowed);
+        DisplayServer.WindowSetSize(settings.WindowSize);
+        DisplayServer.WindowSetPosition(DisplayServer.ScreenGetPosition(settings.TargetDisplay) + settings.WindowPosition);
+    }
+
+    // Godot objects may only be touched on the main thread, so wait there for the result.
     private static T RunOnMainThread<T>(Func<T> func)
     {
         var tcs = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);

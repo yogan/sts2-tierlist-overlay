@@ -37,12 +37,12 @@ internal static class TierLists
         (Settings.Jorbs, "colorless", "81684acf-26a7-4e44-a649-84f4c2824ec0"),
     };
 
-    // game_version=v0.107.1 resolves to the newest list for that version or older; "public"
-    // to the one for the current public game release.
+    // game_version=v0.107.1 resolves to the newest list for that version or older, and
+    // "public" to the one for the current public game release.
     private const string ApiUrl = "https://api.sts2.untapped.gg/api/v1/tier-lists/{0}/resolve/?game_version={1}";
     private const string PublicVersion = "public";
 
-    // Lists change rarely; refresh at most this often, or when the game version changes.
+    // Lists change rarely, so refresh at most this often, or when the game version changes.
     private static readonly TimeSpan RefreshAfter = TimeSpan.FromHours(6);
 
     private const string Colorless = "colorless";

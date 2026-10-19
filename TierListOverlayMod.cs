@@ -6,6 +6,8 @@ using System.Reflection;
 using Godot;
 using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Debug;
+using MegaCrit.Sts2.Core.Entities.CardRewardAlternatives;
+using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Modding;
 using MegaCrit.Sts2.Core.Runs;
@@ -19,6 +21,7 @@ using MegaCrit.Sts2.Core.Nodes.Screens.CardSelection;
 using MegaCrit.Sts2.Core.Nodes.Screens.Shops;
 using MegaCrit.Sts2.Core.Nodes.Screens.TreasureRoomRelic;
 using MegaCrit.Sts2.Core.Rewards;
+using MegaCrit.Sts2.Core.Rooms;
 
 namespace TierListOverlay;
 
@@ -45,7 +48,8 @@ public static class TierListOverlayMod
     {
         var modDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".";
         Settings.Load(Path.Combine(modDir, "settings.cfg"));
-        // Lists are made per game version; ask for the installed one ("v0.107.1").
+        Account.Load(Path.Combine(modDir, "account.cfg"));
+        // Lists are made per game version, so ask for the installed one ("v0.107.1").
         var gameVersion = ReleaseInfoManager.Instance.ReleaseInfo?.Version;
         GD.Print($"[TierListOverlay] Game version {gameVersion ?? "unknown"}");
         if (gameVersion != null && gameVersion != TestedGameVersion)
@@ -60,32 +64,40 @@ public static class TierListOverlayMod
 
     private static void OnNodeAdded(Node node)
     {
-        if (node is NCard or NRelic or NPotion or NRewardButton or NEventOptionButton)
+        if (node is NCard or NRelic or NPotion or NRewardButton or NEventOptionButton or NCardRewardAlternativeButton or NMerchantCardRemoval)
             Tracked.Add((Control)node);
         Tips.OnNodeAdded(node);
         SettingsUi.OnNodeAdded(node);
+        Hint.OnNodeAdded(node);
     }
 
     private static void OnProcessFrame()
     {
         SettingsUi.OnProcessFrame();
-        // The game's model database may not be ready in the first frames; then try again.
+        Hint.OnProcessFrame();
+        Account.OnProcessFrame();
+        // The game's model database may not be ready in the first frames. If so, try again.
         if (TierLists.Generation != _checkedGeneration && LogUnknownIds())
             _checkedGeneration = TierLists.Generation;
         // A pooled node leaves the tree and is added again (and tracked again) on reuse.
         Tracked.RemoveWhere(c => !GodotObject.IsInstanceValid(c) || !c.IsInsideTree());
-        if (Tracked.Count == 0)
-            return;
         var characterId = CurrentCharacterId();
         Tips.OnProcessFrame(characterId);
+        if (Tracked.Count == 0)
+            return;
         foreach (var node in Tracked)
         {
             try
             {
-                var (itemId, placement, bounds) = Describe(node);
-                Badges.Sync(node, Lookup(characterId, itemId, node is NCard), bounds, placement, node is NCard && HasAncestor<NDeckUpgradeSelectScreen>(node));
-                if (node is NRelic or NPotion)
+                var (itemId, mode, placement, bounds) = Describe(node);
+                var (keep, content) = Content(node, characterId, itemId, mode);
+                if (keep)
+                    continue;
+                Badges.Sync(node, content, bounds, placement);
+                if (node is NRelic or NPotion or NMerchantCardRemoval)
                     MakeRoomForBadge(node);
+                if (node is NCardRewardAlternativeButton button)
+                    Tips.ShowOnFocus(button);
             }
             catch (Exception ex)
             {
@@ -94,43 +106,185 @@ public static class TierListOverlayMod
         }
     }
 
-    // NCard is centred on its origin and has no size of its own; NCard.defaultSize is the frame.
+    // The badge for a node: its stats when they are wanted and available, otherwise its tier.
+    // Keep: stats are on their way. Leave the item's badge as it is until they arrive, so it
+    // does not flash from tier to stats. Not a badge left from another item on a reused node.
+    private static (bool Keep, BadgeContent? Content) Content(Control node, string? characterId, string? itemId, BadgeMode mode)
+    {
+        if (itemId == null || mode == BadgeMode.None)
+            return (false, null);
+        var isCard = node is NCard;
+        var tier = itemId is SkipId or RemoveId ? null : Lookup(characterId, itemId, isCard);
+        if (mode == BadgeMode.Global && StatsSlot(node) is var (screen, kind, group) && characterId != null)
+        {
+            if (RequestFor(screen, characterId) is { } request)
+            {
+                switch (Stats.Get(request, out var answer))
+                {
+                    case Stats.Lookup.Pending:
+                        var shown = node.GetNodeOrNull<Control>(Badges.BadgeName)?.GetMeta("item_id", "").AsString();
+                        return (shown == null || shown == itemId, null);
+                    case Stats.Lookup.Ready when answer!.Get(group, itemId is SkipId or RemoveId ? Stats.SingleId : itemId) is { } entry:
+                        if (entry.HasData)
+                            return (false, Badges.ForStats(itemId, new StatsInfo(kind, entry, request.Act), tier?.Entry.Tier ?? ""));
+                        // Too few runs for stats: no badge rather than one saying so. A hidden
+                        // tier badge still brings up the tier list's tip.
+                        return (false, tier is var (tierId, hiddenEntry) ? Badges.ForTier(tierId, hiddenEntry, false) with { Hidden = true } : null);
+                }
+            }
+        }
+        if (tier is var (id, tierEntry))
+            return (false, Badges.ForTier(id, tierEntry, isCard && HasAncestor<NDeckUpgradeSelectScreen>(node)));
+        return (false, null);
+    }
+
+    // Item IDs for the two offers that are no items.
+    private const string SkipId = "SKIP";
+    private const string RemoveId = "CARD_REMOVAL";
+
+    // The screen whose stats request covers the node, which stats it gets, and its group in
+    // the answer. Null on screens without stats (deck view, remove, transform, …).
+    private static (Node Screen, StatsKind Kind, string Group)? StatsSlot(Control node)
+    {
+        for (var n = node.GetParent(); n != null; n = n.GetParent())
+        {
+            switch (n)
+            {
+                case NInspectCardScreen:
+                    return null;
+                case NCardRewardSelectionScreen when node is NCard:
+                    return (n, StatsKind.Reward, "cards");
+                case NCardRewardSelectionScreen when node is NCardRewardAlternativeButton:
+                    return (n, StatsKind.Skip, "skip");
+                case NMerchantInventory:
+                    return node switch
+                    {
+                        NCard => (n, StatsKind.Shop, "cards"),
+                        NRelic => (n, StatsKind.Shop, "relics"),
+                        NPotion => (n, StatsKind.Shop, "potions"),
+                        NMerchantCardRemoval => (n, StatsKind.Shop, "remove"),
+                        _ => null,
+                    };
+                case NDeckUpgradeSelectScreen when node is NCard:
+                    return (n, StatsKind.Upgrade, "cards");
+            }
+        }
+        // Ancients offer relics as event options. The options' container is the screen.
+        if (node is NEventOptionButton && node.GetParent() is { } options)
+            return (options, StatsKind.Ancient, "relics");
+        return null;
+    }
+
+    // Each screen's stats request, made at most every half second: building one reads the
+    // whole offer (on the upgrade screen, the deck). What a screen offers changes rarely.
+    private static readonly Dictionary<Node, (ulong At, StatsRequest? Request)> Requests = new();
+    private const ulong RequestRefreshMs = 500;
+
+    private static StatsRequest? RequestFor(Node screen, string characterId)
+    {
+        var now = Time.GetTicksMsec();
+        if (Requests.TryGetValue(screen, out var made) && now - made.At < RequestRefreshMs)
+            return made.Request;
+        foreach (var gone in Requests.Keys.Where(n => !GodotObject.IsInstanceValid(n)).ToList())
+            Requests.Remove(gone);
+        var request = BuildRequest(screen, characterId);
+        Requests[screen] = (now, request);
+        return request;
+    }
+
+    private static readonly FieldInfo? RewardOptionsField = typeof(NCardRewardSelectionScreen).GetField("_options", BindingFlags.NonPublic | BindingFlags.Instance);
+    private static readonly FieldInfo? RewardAlternativesField = typeof(NCardRewardSelectionScreen).GetField("_extraOptions", BindingFlags.NonPublic | BindingFlags.Instance);
+    private static readonly FieldInfo? GridCardsField = typeof(NCardGridSelectionScreen).GetField("_cards", BindingFlags.NonPublic | BindingFlags.Instance);
+
+    private static Stats.Card StatsCard(CardModel card, int price = 0) =>
+        new(card.Id.Entry, card.CurrentUpgradeLevel, card.Enchantment?.Id.Entry, price);
+
+    // What the screen offers, as a stats request, or null when there is nothing to ask about.
+    private static StatsRequest? BuildRequest(Node screen, string characterId)
+    {
+        var state = RunManager.Instance?.DebugOnlyGetState();
+        if (state == null)
+            return null;
+        var act = state.CurrentActIndex + 1;
+        var party = state.Players.Count;
+        switch (screen)
+        {
+            case NCardRewardSelectionScreen reward when RewardOptionsField?.GetValue(reward) is IReadOnlyList<CardCreationResult> options:
+                var room = state.CurrentRoom?.RoomType ?? RoomType.Unassigned;
+                // A boss's cards are for the next act.
+                return Stats.CardReward(options.Select(o => StatsCard(o.Card)), room == RoomType.Boss ? act + 1 : act, characterId, party, (int)room);
+            case NMerchantInventory { Inventory: { } inventory }:
+                return Stats.Shop(
+                    inventory.CardEntries.Where(e => e.IsStocked).Select(e => StatsCard(e.CreationResult!.Card, e.Cost)),
+                    inventory.RelicEntries.Where(e => e.IsStocked).Select(e => new Stats.Priced(e.Model!.Id.Entry, e.Cost)),
+                    inventory.PotionEntries.Where(e => e.IsStocked).Select(e => new Stats.Priced(e.Model!.Id.Entry, e.Cost)),
+                    inventory.CardRemovalEntry?.Cost ?? 0, act, characterId, party);
+            case NDeckUpgradeSelectScreen upgrade when GridCardsField?.GetValue(upgrade) is IReadOnlyList<CardModel> cards:
+                return Stats.Upgrade(cards.Select(c => StatsCard(c)), act, characterId, party);
+            // Other events offer relics as options too (mushrooms), but only ancients have stats.
+            default:
+                if (state.CurrentRoom is not EventRoom { CanonicalEvent: AncientEventModel })
+                    return null;
+                var relics = screen.GetChildren().OfType<NEventOptionButton>().Select(o => o.Option?.Relic?.Id.Entry).OfType<string>().ToList();
+                return relics.Count > 0 ? Stats.Ancient(relics, act, characterId, party) : null;
+        }
+    }
+
+    // The card reward's alternatives (Skip, and Reroll with some relics) are buttons in the
+    // order of the screen's alternatives.
+    private static bool IsSkip(NCardRewardAlternativeButton button)
+    {
+        var screen = FindAncestor<NCardRewardSelectionScreen>(button);
+        if (screen == null || RewardAlternativesField?.GetValue(screen) is not IReadOnlyList<CardRewardAlternative> alternatives)
+            return false;
+        var index = button.GetParent().GetChildren().OfType<NCardRewardAlternativeButton>().Where(b => !b.IsQueuedForDeletion()).ToList().IndexOf(button);
+        return index >= 0 && index < alternatives.Count && alternatives[index].OptionId == "Skip";
+    }
+
+    // NCard is centred on its origin and has no size of its own. NCard.defaultSize is the frame.
     private static readonly Rect2 CardBounds = new(-NCard.defaultSize / 2, NCard.defaultSize);
 
-    // The item a node shows if it should be rated (null otherwise, also when the settings turn
-    // its badges off), where its badge goes, and the node's visible rectangle in its own
-    // coordinates.
-    private static (string? ItemId, Placement Placement, Rect2 Bounds) Describe(Control node)
+    // The item a node shows, what its badge should show (the settings per kind of badge), where
+    // the badge goes, and the node's visible rectangle in its own coordinates.
+    private static (string? ItemId, BadgeMode Mode, Placement Placement, Rect2 Bounds) Describe(Control node)
     {
         var own = new Rect2(Vector2.Zero, node.Size);
         if (node is NCard card)
         {
-            var on = CardScreen(card) switch
+            var mode = CardScreen(card) switch
             {
-                CardScreenKind.Choice => Settings.CardChoices,
-                CardScreenKind.Deck => Settings.DeckScreens,
-                _ => false,
+                CardScreenKind.Choice => Settings.Cards,
+                // No stats there.
+                CardScreenKind.Deck when Settings.Deck => BadgeMode.Tiers,
+                _ => BadgeMode.None,
             };
-            return (on ? card.Model?.Id.Entry : null, Placement.InsideBottom, CardBounds);
+            return (card.Model?.Id.Entry, mode, Placement.InsideBottom, CardBounds);
         }
-        if (!Settings.Relics)
-            return (null, Placement.AcrossBottom, own);
+        // Skip and card removal have stats but no tier.
+        var statsOnly = Settings.Cards == BadgeMode.Global ? BadgeMode.Global : BadgeMode.None;
+        if (node is NCardRewardAlternativeButton skip)
+            return (IsSkip(skip) ? SkipId : null, statsOnly, Placement.AboveTop, own);
+        // The slot's own rectangle is not where its coin is drawn, the hitbox is.
+        if (node is NMerchantCardRemoval removal)
+            return (RemoveId, statsOnly, Placement.AcrossBottom,
+                removal.Hitbox is { } hitbox ? new Rect2(hitbox.Position, hitbox.Size) : own);
+        var (relics, potions) = (Settings.Relics, Settings.Potions);
         return node switch
         {
             NRelic relic when HasAncestor<NMerchantInventory>(relic) || HasAncestor<NTreasureRoomRelicCollection>(relic) || HasAncestor<NChooseARelicSelection>(relic)
-                => (relic.Model.Id.Entry, Placement.AcrossBottom, own),
-            NPotion potion when HasAncestor<NMerchantInventory>(potion) => (potion.Model.Id.Entry, Placement.AcrossBottom, own),
+                => (relic.Model.Id.Entry, relics, Placement.AcrossBottom, own),
+            NPotion potion when HasAncestor<NMerchantInventory>(potion) => (potion.Model.Id.Entry, potions, Placement.AcrossBottom, own),
             // Elite and event loot: the relic or potion is only an icon on the button.
-            NRewardButton { Reward: RelicReward r } => (r.Relic?.Id.Entry, Placement.RightEdge, own),
-            NRewardButton { Reward: PotionReward p } => (p.Potion?.Id.Entry, Placement.RightEdge, own),
+            NRewardButton { Reward: RelicReward r } => (r.Relic?.Id.Entry, relics, Placement.RightEdge, own),
+            NRewardButton { Reward: PotionReward p } => (p.Potion?.Id.Entry, potions, Placement.RightEdge, own),
             // Ancients (Neow, Darv, …) offer relics as event options.
-            NEventOptionButton option => (option.Option?.Relic?.Id.Entry, Placement.TopCentre, own),
-            _ => (null, Placement.InsideBottom, own),
+            NEventOptionButton option => (option.Option?.Relic?.Id.Entry, relics, Placement.TopCentre, own),
+            _ => (null, BadgeMode.None, Placement.InsideBottom, own),
         };
     }
 
     // Lists can name items the game does not have (renamed, removed, or from a newer game
-    // version); they never get a badge, so say which ones once per load.
+    // version). They never get a badge, so say which ones once per load.
     private static bool LogUnknownIds()
     {
         if (TierLists.Generation == 0)
@@ -160,13 +314,13 @@ public static class TierListOverlayMod
         }
     }
 
-    // In the shop a relic's or potion's price sits right below the icon, where the badge goes;
-    // move it down while there is a badge.
+    // In the shop a relic's or potion's price sits right below the icon, where the badge goes,
+    // so move it down while there is a badge.
     private const string CostOffsetMeta = "tierlist_cost_offset";
 
     private static void MakeRoomForBadge(Control icon)
     {
-        var slot = icon.GetParent()?.GetParent() as NMerchantSlot;
+        var slot = icon as NMerchantSlot ?? icon.GetParent()?.GetParent() as NMerchantSlot;
         if (slot?.GetNodeOrNull<Control>("Cost") is not { } cost)
             return;
         var badge = icon.GetNodeOrNull<Control>(Badges.BadgeName);
@@ -185,7 +339,7 @@ public static class TierListOverlayMod
         cost.SetMeta(CostOffsetMeta, offset);
     }
 
-    private static (string Id, TierEntry Entry)? Lookup(string? characterId, string? itemId, bool isCard)
+    internal static (string Id, TierEntry Entry)? Lookup(string? characterId, string? itemId, bool isCard)
     {
         if (itemId == null)
             return null;
@@ -197,28 +351,30 @@ public static class TierListOverlayMod
     }
 
     // The local player's character ("IRONCLAD"), or null outside a run.
-    private static string? CurrentCharacterId()
+    internal static string? CurrentCharacterId()
     {
         var state = RunManager.Instance?.DebugOnlyGetState();
         return state == null ? null : LocalContext.GetMe(state)?.Character.Id.Entry;
     }
 
-    private static bool HasAncestor<T>(Node node)
+    private static bool HasAncestor<T>(Node node) where T : Node => FindAncestor<T>(node) != null;
+
+    private static T? FindAncestor<T>(Node node) where T : Node
     {
         for (var n = node.GetParent(); n != null; n = n.GetParent())
         {
-            if (n is T)
-                return true;
+            if (n is T t)
+                return t;
         }
-        return false;
+        return null;
     }
 
     private enum CardScreenKind
     {
         None,
-        // Picking or buying new cards.
+        // Picking, buying or upgrading cards: the screens with stats, and similar ones.
         Choice,
-        // Working on the deck.
+        // Working on the deck otherwise.
         Deck,
     }
 
@@ -235,8 +391,9 @@ public static class TierListOverlayMod
                 case NCardRewardSelectionScreen or NChooseACardSelectionScreen or NChooseABundleSelectionScreen:
                 case NMerchantInventory:
                 case NSimpleCardSelectScreen:
+                case NDeckUpgradeSelectScreen:
                     return CardScreenKind.Choice;
-                case NDeckUpgradeSelectScreen or NDeckTransformSelectScreen or NDeckEnchantSelectScreen or NDeckCardSelectScreen:
+                case NDeckTransformSelectScreen or NDeckEnchantSelectScreen or NDeckCardSelectScreen:
                 case NDeckViewScreen:
                     return CardScreenKind.Deck;
             }

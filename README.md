@@ -10,12 +10,25 @@ Baalorlord and Jorbs tier lists from Untapped.gg and was inspired by the Untappe
   options.
 - **Commentary** from the list's author in an extra hover tip, and a mark on cards that are a
   good upgrade.
-- **Settings** in the game's *General* tab: Jorbs' card ratings instead of Baalorlord's, and
-  toggles for each kind of badge and for the commentary tips. Jorbs rates cards only, so relics
-  and potions always use Baalorlord's lists.
+- **Settings** in a *Tier List* tab of the game's settings: what the badges on cards, relics,
+  potions and deck screens show (none, the tier list, or global stats), Baalorlord's or Jorbs'
+  list, the commentary tips, and the Untapped.gg login. Jorbs rates cards only, so relics and
+  potions always use Baalorlord's lists.
 
 The lists are fetched for the installed game version at game start and cached next to the mod,
 so it also works offline.
+
+### Optional: Untapped.gg stats
+
+With an Untapped.gg account, the badges can show Untapped.gg's global stats instead of tiers:
+how often players picked (or bought, or upgraded) an item, and how the act's and the run's
+winrate changed when they did. They're shown on card rewards (including Skip), ancient
+options, the shop (including card removal) and the rest site's upgrade screen. The hover tips
+spell them out, with the tier list rating below. To turn it on, press *Log in* at the bottom of
+the *Tier List* tab (it opens Untapped.gg's login in the browser), then set the badges to
+*Global stats*. Screens without stats show the tier list. The login is kept in `account.cfg`
+next to the mod. *Log out* deletes it. Without a login, or when Untapped.gg is unreachable, the
+mod shows tiers as before.
 
 ## Requirements
 
@@ -55,10 +68,10 @@ dotnet build -c Release -p:Install=true -p:STS2GameDir="D:/Games/Slay the Spire 
 
 Or build without `-p:Install=true` and copy `bin/Release/net9.0/TierListOverlay.dll` and
 `TierListOverlay.json` into a `TierListOverlay` folder in the game's mods folder (create it if
-needed; it sits next to the game's executable).
+needed. It sits next to the game's executable.)
 
 For development (macOS only), `tools/reload.sh` quits the game, builds and installs this mod and
-the DevTools mod (`tools/DevTools/`), and starts the game again; `tools/check.py` then checks
+the DevTools mod (`tools/DevTools/`), and starts the game again. `tools/check.py` then checks
 the badges and tips in the running game. `docs/UPDATING.md` describes what to do after a game
 update.
 

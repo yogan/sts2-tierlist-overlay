@@ -6,7 +6,7 @@
 """Poke at the running game while developing: look at nodes, click, take small screenshots.
 
 Talks to the DevTools mod (port 15527) like tools/check.py does, and reuses its helpers.
-Coordinates are window pixels (screenshot pixels), as /inspect and /tree report them; the
+Coordinates are window pixels (screenshot pixels), as /inspect and /tree report them. The
 window size varies (e.g. 1920x1080 or 3024x1898), so read positions off `tree`, never assume.
 
   dev.py tree NMerchantRelic [--depth 4] [--all]   node subtree: name, type, rect, text
@@ -14,6 +14,8 @@ window size varies (e.g. 1920x1080 or 3024x1898), so read positions off `tree`, 
   dev.py move X Y | click X Y                      mouse (real input path)
   dev.py key Escape                                press a key (Godot Key name)
   dev.py console 'room Shop'                       dev console command
+  dev.py window windowed|saved                     game in a window beside other apps / back to
+                                                   the player's display setting (none is saved)
   dev.py shot [--node TYPE[:N]] [--crop X,Y,W,H] [--pad P] [--zoom Z] [--max PX] [NAME]
         screenshot to .artifacts/NAME.png, optionally cropped to a node's rect (Nth match)
         or a window rect, padded, zoomed (nearest) or shrunk to fit --max (default 1600),
@@ -78,7 +80,7 @@ def node_rects(node_type):
         for c in n.get("children", []):
             walk(c)
 
-    # /tree roots at the first node of the type; its siblings hide under the parent, so
+    # /tree roots at the first node of the type. Its siblings hide under the parent, so
     # search from the scene root instead.
     walk(check.tree("NGame", 40))
     return found
@@ -116,7 +118,7 @@ def main():
     p.add_argument("--depth", type=int, default=4)
     p.add_argument("--all", action="store_true", help="include hidden nodes")
     p = sub.add_parser("inspect")
-    p.add_argument("--kind", choices=["cards", "relics", "potions", "badges", "hover_tips", "tier_tips"])
+    p.add_argument("--kind", choices=["cards", "relics", "potions", "badges", "hover_tips", "tier_tips", "stats_tips"])
     for name in ("move", "click"):
         p = sub.add_parser(name)
         p.add_argument("x", type=float)
@@ -125,6 +127,8 @@ def main():
     p.add_argument("name")
     p = sub.add_parser("console")
     p.add_argument("command")
+    p = sub.add_parser("window", help="windowed: watchable beside other apps, saved: the player's own setting")
+    p.add_argument("mode", choices=["windowed", "saved"])
     p = sub.add_parser("shot")
     p.add_argument("name", nargs="?", default="dev")
     p.add_argument("--node", help="crop to a node type's rect, e.g. NMerchantRelic:1")
@@ -140,7 +144,7 @@ def main():
         elif args.cmd == "inspect":
             view = check.inspect()
             print("window", view["window"], "character", view["character"])
-            for kind in [args.kind] if args.kind else ["cards", "relics", "potions", "badges", "hover_tips", "tier_tips"]:
+            for kind in [args.kind] if args.kind else ["cards", "relics", "potions", "badges", "hover_tips", "tier_tips", "stats_tips"]:
                 for item in view[kind]:
                     if item.get("on_screen", True) and item.get("visible", True):
                         label = item.get("id") or item.get("item_id") or ""
@@ -153,6 +157,8 @@ def main():
             check._request(f"{check.DEVTOOLS}/key?name={urllib.parse.quote(args.name)}", b"")
         elif args.cmd == "console":
             print(json.dumps(check.console(args.command)))
+        elif args.cmd == "window":
+            check.window(args.mode)
         elif args.cmd == "shot":
             cmd_shot(args)
     except check.CheckError as e:
