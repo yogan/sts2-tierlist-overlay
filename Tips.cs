@@ -162,7 +162,7 @@ internal static class Tips
             {
                 lines.Add(mine.Offered == 0 ? "Never offered yet" : $"Never {verb} in {mine.Offered} {(mine.Offered == 1 ? "offer" : "offers")}");
                 if (mine.LowerRuns > 0)
-                    lines.Add($"But {verb} in {mine.LowerRuns} {(mine.LowerRuns == 1 ? "run" : "runs")} below Ascension 7");
+                    lines.Add($"{Capital(verb)} in {mine.LowerRuns} {(mine.LowerRuns == 1 ? "run" : "runs")} below A7");
             }
             else
             {

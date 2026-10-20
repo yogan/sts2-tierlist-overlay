@@ -239,7 +239,7 @@ def check_personal_tip(result, item, kind, group, history, shot_name):
     if shown == "unpicked":
         wanted = ["Never offered yet" if c[1] == 0 else f"Never {verb} in {c[1]} {'offer' if c[1] == 1 else 'offers'}"]
         if lower:
-            wanted.append(f"But {verb} in {lower} {'run' if lower == 1 else 'runs'} below Ascension 7")
+            wanted.append(f"{verb.capitalize()} in {lower} {'run' if lower == 1 else 'runs'} below A7")
     else:
         wanted = [PERSONAL_KINDS[kind][1].format(c[0], c[1], percent(100 * c[0] / c[1]))]
     if shown == "counts" and group in ("cards", "relics") and kind not in ("skip", "remove") and history["wins"]:
