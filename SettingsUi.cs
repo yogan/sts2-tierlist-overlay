@@ -88,8 +88,8 @@ internal static class SettingsUi
             "Below the global stats, how many offers they are based on.", () => Settings.AnyGlobal, Group: true),
 
         new AccountRow(AccountKey, "Untapped.gg", "Untapped.gg",
-            "Untapped.gg collects runs from its players. Logged in, badges can show their pick and win rates. Log in opens "
-            + "Untapped.gg in the browser.", Group: true),
+            "Logged in, badges can show the pick and win rates of Untapped.gg's players. The mod only reads these stats and "
+            + "sends none of your runs. Log in opens Untapped.gg in the browser.", Group: true),
     };
 
     private static readonly FieldInfo? TabsField = typeof(NSettingsTabManager).GetField("_tabs", BindingFlags.NonPublic | BindingFlags.Instance);

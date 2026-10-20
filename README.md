@@ -28,7 +28,7 @@ spell them out, with the tier list rating below. To turn it on, press *Log in* a
 the *Tier List* tab (it opens Untapped.gg's login in the browser), then set the badges to
 *Global stats*. Screens without stats show the tier list. The login is kept in `account.cfg`
 next to the mod. *Log out* deletes it. Without a login, or when Untapped.gg is unreachable, the
-mod shows tiers as before.
+mod shows tiers as before. The mod only reads these stats. It sends none of your runs.
 
 ## Requirements
 
