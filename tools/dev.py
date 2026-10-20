@@ -5,7 +5,8 @@
 # ///
 """Poke at the running game while developing: look at nodes, click, take small screenshots.
 
-Talks to the DevTools mod (port 15527) like tools/check.py does, and reuses its helpers.
+Talks to the DevTools mod (port 15527) like tools/check.py does, and reuses its helpers
+(checklib/game.py).
 Coordinates are window pixels (screenshot pixels), as /inspect and /tree report them. The
 window size varies (e.g. 1920x1080 or 3024x1898), so read positions off `tree`, never assume.
 
@@ -30,7 +31,7 @@ import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import check  # noqa: E402  (shares the HTTP helpers and paths)
+from checklib import game  # noqa: E402  (shares the HTTP helpers and paths)
 
 from PIL import Image  # noqa: E402
 
@@ -83,7 +84,7 @@ def node_rects(node_type):
 
     # /tree roots at the first node of the type. Its siblings hide under the parent, so
     # search from the scene root instead.
-    walk(check.tree("NGame", 40))
+    walk(game.tree("NGame", 40))
     return found
 
 
@@ -97,7 +98,7 @@ def cmd_shot(args):
         box = rects[int(index or 0)]
     elif args.crop:
         box = [float(v) for v in args.crop.split(",")]
-    path = check.screenshot(args.name)
+    path = game.screenshot(args.name)
     image = Image.open(path).convert("RGB")
     if box:
         x, y, w, h = box
@@ -141,9 +142,9 @@ def main():
 
     try:
         if args.cmd == "tree":
-            print_tree(check.tree(args.type, args.depth), args.all)
+            print_tree(game.tree(args.type, args.depth), args.all)
         elif args.cmd == "inspect":
-            view = check.inspect()
+            view = game.inspect()
             print("window", view["window"], "character", view["character"])
             for kind in [args.kind] if args.kind else ["cards", "relics", "potions", "badges", "hover_tips", "tier_tips", "stats_tips"]:
                 for item in view[kind]:
@@ -153,16 +154,16 @@ def main():
                         ctx = ",".join(item.get("context", [])[:3])
                         print(f"{kind[:-1]:9} {label:24} {extra:16} {[round(v) for v in item['rect']]} {ctx}")
         elif args.cmd in ("move", "click"):
-            check._request(f"{check.DEVTOOLS}/mouse/{args.cmd}?x={args.x:.0f}&y={args.y:.0f}", b"")
+            game._request(f"{game.DEVTOOLS}/mouse/{args.cmd}?x={args.x:.0f}&y={args.y:.0f}", b"")
         elif args.cmd == "key":
-            check._request(f"{check.DEVTOOLS}/key?name={urllib.parse.quote(args.name)}", b"")
+            game._request(f"{game.DEVTOOLS}/key?name={urllib.parse.quote(args.name)}", b"")
         elif args.cmd == "console":
-            print(json.dumps(check.console(args.command)))
+            print(json.dumps(game.console(args.command)))
         elif args.cmd == "window":
-            check.window(args.mode)
+            game.window(args.mode)
         elif args.cmd == "shot":
             cmd_shot(args)
-    except check.CheckError as e:
+    except game.CheckError as e:
         sys.exit(str(e))
 
 

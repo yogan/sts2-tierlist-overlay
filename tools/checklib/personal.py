@@ -1,0 +1,417 @@
+"""The player's own stats from the game's run history, on badges and in tips.
+
+With badges on personal stats, card rewards (and Skip), ancient options and the shop (and card
+removal) show how often the player took the item in their own runs. Real profiles are never
+touched: the checks write synthetic runs to the mod's test-history folder, which the mod then
+reads instead of the profile's history, and count them here the way the mod should."""
+
+import json
+import shutil
+import time
+
+from .game import (MOD_DIR, act, hover, hover_until, inspect, log_length, log_since, open_ancient,
+                   open_card_reward, open_shop, read_settings, screenshot, wait_for)
+from .geometry import centre, fully_inside, share_covered
+from .global_stats import percent
+from .settings import ensure_stats, set_setting
+from .verify import check_badges, check_badges_on_box_top, check_prices_clear, check_tip, in_context
+
+TEST_HISTORY = MOD_DIR / "test-history"
+PREFIX = {"cards": "CARD.", "relics": "RELIC.", "potions": "POTION."}
+# Per kind: the badge's label, the tip's line (taken, offered, share).
+PERSONAL_KINDS = {
+    "reward": ("Pick", "Picked {} of {} ({})"),
+    "skip": ("Pick", "Picked Skip {} of {} ({})"),
+    "ancient": ("Pick", "Picked {} of {} ({})"),
+    "shop": ("Buy", "Bought {} of {} ({})"),
+    "remove": ("Buy", "Removed {} of {} ({})"),
+}
+
+
+def count_history(runs, character):
+    """The player's numbers from run history files: (kind, id) -> [taken, offered], won runs
+    per final card or relic, runs and wins counted, per (kind, id) the runs below Ascension 7
+    that took it, and (kind, id) -> [taken, offered] with the other characters. Runs count at
+    Ascension 7+, in standard mode, alone, with `character`."""
+    history = _count_character(runs, character)
+    history["character"] = character
+    history["others"] = {}
+    for other in {r["players"][0]["character"].split(".", 1)[1] for r in runs if r.get("players")} - {character}:
+        for key, (taken, offered) in _count_character(runs, other)["counts"].items():
+            c = history["others"].setdefault(key, [0, 0])
+            c[0] += taken
+            c[1] += offered
+    return history
+
+
+def _count_character(runs, character):
+    counts, in_wins, lower, counted, wins = {}, {}, {}, 0, 0
+    for run in runs:
+        players = run.get("players", [])
+        if (len(players) != 1 or run.get("game_mode") != "standard" or "ascension" not in run
+                or players[0]["character"] != f"CHARACTER.{character}"):
+            continue
+        offers = []
+
+        def offer(kind, item_id, taken):
+            offers.append(((kind, item_id.split(".", 1)[-1]), bool(taken)))
+
+        for floor in (f for act_floors in run["map_point_history"] for f in act_floors):
+            stats = (floor.get("player_stats") or [{}])[0]
+            cards = stats.get("card_choices", [])
+            if floor["map_point_type"] == "shop":
+                for c in cards:
+                    offer("shop", c["card"]["id"], False)
+                for c in stats.get("cards_gained", []):
+                    offer("shop", c["id"], True)
+                for key in ("relic_choices", "potion_choices"):
+                    for c in stats.get(key, []):
+                        offer("shop", c["choice"], c["was_picked"])
+                offer("remove", "", bool(stats.get("cards_removed")))
+            elif cards:
+                for c in cards:
+                    offer("reward", c["card"]["id"], c["was_picked"])
+                offer("skip", "", not any(c["was_picked"] for c in cards))
+            for c in stats.get("ancient_choice", []):
+                offer("ancient", c["TextKey"], c["was_chosen"])
+        if run["ascension"] < 7:
+            for key in {key for key, taken in offers if taken}:
+                lower[key] = lower.get(key, 0) + 1
+            continue
+        counted += 1
+        for key, taken in offers:
+            c = counts.setdefault(key, [0, 0])
+            c[0] += taken
+            c[1] += 1
+        if run.get("win"):
+            wins += 1
+            player = players[0]
+            for item in {("cards", c["id"].split(".", 1)[-1]) for c in player["deck"]} | \
+                        {("relics", r["id"].split(".", 1)[-1]) for r in player["relics"]}:
+                in_wins[item] = in_wins.get(item, 0) + 1
+    return {"counts": counts, "in_wins": in_wins, "lower": lower, "runs": counted, "wins": wins}
+
+
+def fixture_runs(character, offers, counted=10):
+    """Synthetic runs offering `offers` ((kind, group, id), kind one of reward/shop/ancient):
+    item n in the first 4 + n counted runs, taken in every
+    third, card removal at every other shop, every fourth run won. With three items or more,
+    the last is never taken (but is in a lower run), with four or more the one before is never
+    offered. Plus runs
+    that must not count: Ascension 6 (which takes all it is offered), two players, another
+    character, a custom game."""
+    never_taken = len(offers) - 1 if len(offers) >= 3 else None
+    never_offered = len(offers) - 2 if len(offers) >= 4 else None
+
+    def run(j, character=character, ascension=10, mode="standard", players=1):
+        floors, deck, relics = [], [{"id": f"CARD.STRIKE_{character}"}], []
+        shop = {"card_choices": [], "cards_gained": [], "relic_choices": [], "potion_choices": []}
+        ancient = []
+        for n, (kind, group, item_id) in enumerate(offers):
+            if j >= 4 + n or n == never_offered:
+                continue
+            taken = ascension < 7 or (j + n) % 3 == 0 and n != never_taken
+            full_id = PREFIX[group] + item_id
+            if kind == "reward":
+                # Taken, or another card, or nothing (a skip). A reroll before it, unpicked.
+                choices = [{"card": {"id": "CARD.FIXTURE_REROLLED"}, "was_picked": False}] if n == 1 else []
+                choices += [{"card": {"id": full_id}, "was_picked": taken},
+                            {"card": {"id": "CARD.FIXTURE_OTHER"}, "was_picked": not taken and (j + n) % 3 == 1}]
+                floors.append({"map_point_type": "monster", "player_stats": [{"card_choices": choices}]})
+                if taken:
+                    deck.append({"id": full_id})
+            elif kind == "ancient":
+                ancient.append({"TextKey": item_id, "was_chosen": taken})
+                if taken:
+                    relics.append({"id": full_id})
+            elif group == "cards":
+                (shop["cards_gained"] if taken else shop["card_choices"]).append(
+                    {"id": full_id} if taken else {"card": {"id": full_id}, "was_picked": False})
+                if taken:
+                    deck.append({"id": full_id})
+            else:
+                shop[f"{group[:-1]}_choices"].append({"choice": full_id, "was_picked": taken})
+                if taken and group == "relics":
+                    relics.append({"id": full_id})
+        if ancient:
+            floors.insert(0, {"map_point_type": "ancient", "player_stats": [{"ancient_choice": ancient}]})
+        if j % 2 == 0:
+            shop["cards_removed"] = [{"id": f"CARD.STRIKE_{character}"}]
+        floors.append({"map_point_type": "shop", "player_stats": [shop]})
+        player = {"character": f"CHARACTER.{character}", "deck": deck, "relics": relics}
+        return {"schema_version": 9, "ascension": ascension, "game_mode": mode, "win": j % 4 == 0,
+                "players": [player] * players, "map_point_history": [floors]}
+    other = "SILENT" if character != "SILENT" else "IRONCLAD"
+    return ([run(j) for j in range(counted)]
+            + [run(0, ascension=6), run(0, players=2), run(0, character=other), run(0, mode="custom")])
+
+
+def wait_history_read(count, since):
+    """Waits until the mod has rescanned a history of `count` runs (logged after line `since`)."""
+    marker = f"[TierListOverlay] Run history: {count} runs"
+    wait_for(lambda: any(line.startswith(marker) for line in log_since(since)), "the mod to read the test history", timeout=15)
+    time.sleep(1.0)  # badges follow on the next frames
+
+
+def write_test_history(runs):
+    """Replaces the test-history folder's runs, under new names, so the mod reads them anew.
+    Plus a backup file, which it must ignore. Returns the log line count before."""
+    since = log_length()
+    shutil.rmtree(TEST_HISTORY, ignore_errors=True)
+    TEST_HISTORY.mkdir(parents=True)
+    start = int(time.time() * 1000)
+    for n, run in enumerate(runs):
+        (TEST_HISTORY / f"{start + n}.run").write_text(json.dumps(run, indent=2))
+    (TEST_HISTORY / f"{start}.run.backup").write_text(json.dumps(runs[0]))
+    wait_history_read(len(runs), since)
+    return since
+
+
+def remove_test_history():
+    shutil.rmtree(TEST_HISTORY, ignore_errors=True)
+
+
+def personal_label(kind, c):
+    return f"{PERSONAL_KINDS[kind][0]} {c[0]}/{c[1]}"
+
+
+def personal_entry(history, kind, item_id):
+    """What the mod shows of the player's numbers: ("unpicked", c), ("counts", c) or (None, c)."""
+    single = kind in ("skip", "remove")
+    c = history["counts"].get((kind, "" if single else item_id), [0, 0])
+    if not single and c[0] == 0:
+        return "unpicked", c
+    return ("counts" if c[1] else None), c
+
+
+def check_personal_badges(result, view, history, context_type, items):
+    """Each item (id, kind, group) in `context_type` shows "Unpicked" when never taken, and
+    otherwise the player's counts (Skip and card removal: none before the first offer). Never
+    a tier beside the others' stats."""
+    badges = [b for b in view["badges"] if b["visible"] and in_context(b, context_type)]
+    for item_id, kind, group in items:
+        shown, c = personal_entry(history, kind, item_id)
+        mine = [b for b in badges if b["item_id"] == item_id]
+        want = {"unpicked": "Unpicked", "counts": personal_label(kind, c)}.get(shown)
+        if want is None:
+            if mine:
+                result.fail(f"{item_id}: never offered, but shows {mine[0]['label']!r}")
+            else:
+                result.note(f"{item_id}: {c[0]}/{c[1]}, no badge ✓")
+        elif not mine:
+            result.fail(f"{item_id}: no badge (expected {want!r})")
+        elif mine[0]["label"] != want:
+            result.fail(f"{item_id}: badge reads {mine[0]['label']!r}, expected {want!r}")
+        else:
+            result.note(f"{item_id}: {want} ✓")
+
+
+def hovered_stats_tips(item):
+    """Hovers the item and returns its visible stats tips, and the view."""
+    mine = lambda view: [t for t in view["stats_tips"] if t["visible"] and t["item_id"] == item["id"]]
+    view = hover_until(centre(item["rect"]), mine)
+    return mine(view), view
+
+
+def check_personal_tip(result, item, kind, group, history, shot_name):
+    """Hovering the item shows one stats tip with the player's numbers first (5+ offers), then
+    Untapped.gg's when logged in."""
+    shown, c = personal_entry(history, kind, item["id"])
+    enough = shown is not None
+    tips, view = hovered_stats_tips(item)
+    result.screenshots.append(screenshot(shot_name))
+    if not tips:
+        if enough:
+            result.fail(f"{item['id']}: no stats tip while hovered")
+        else:
+            result.note(f"{item['id']}: never offered and no global stats, no stats tip ✓")
+        return
+    text = " ".join((tips[0]["text"] or "").split())
+    if not enough:
+        if text.startswith("Your "):
+            result.fail(f"{item['id']}: never offered, but the tip shows yours: {text[:160]!r}")
+        else:
+            result.note(f"{item['id']}: never offered, only global stats in the tip ✓")
+        return
+    verb = {"shop": "bought", "remove": "removed"}.get(kind, "picked")
+    key = (kind, "" if kind in ("skip", "remove") else item["id"])
+    lower = history["lower"].get(key, 0)
+    if shown == "unpicked":
+        wanted = ["Never offered yet" if c[1] == 0 else f"Never {verb} in {c[1]} {'offer' if c[1] == 1 else 'offers'}"]
+        if lower:
+            wanted.append(f"But {verb} in {lower} {'run' if lower == 1 else 'runs'} below Ascension 7")
+    else:
+        wanted = [PERSONAL_KINDS[kind][1].format(c[0], c[1], percent(100 * c[0] / c[1]))]
+    if shown == "counts" and group in ("cards", "relics") and kind not in ("skip", "remove") and history["wins"]:
+        w = history["wins"]
+        wanted.append(f"In {history['in_wins'].get((group, item['id']), 0)} of your {w} {'win' if w == 1 else 'wins'}")
+    if key in history["others"]:
+        wanted.append("Other characters: {} of {}".format(*history["others"][key]))
+    missing = [w for w in wanted if w not in text]
+    heading = f"Your {history['character'].capitalize()} runs"
+    if not text.startswith(heading):
+        result.fail(f"{item['id']}: the tip does not start with {heading!r}: {text[:160]!r}")
+    elif missing:
+        result.fail(f"{item['id']}: the tip lacks {missing}: {text[:200]!r}")
+    elif ("of your" in text) != any("of your" in w for w in wanted):
+        result.fail(f"{item['id']}: the tip has a wins line, expected none: {text[:200]!r}")
+    elif "Other players'" in text and text.index("Other players'") < text.index(heading):
+        result.fail(f"{item['id']}: other players' stats before yours: {text[:200]!r}")
+    elif ("Based on" in text) != read_settings()["stats_samples"]:
+        result.fail(f"{item['id']}: the tip {'lacks' if read_settings()['stats_samples'] else 'shows'} the sample size: {text[:200]!r}")
+    elif not fully_inside(tips[0]["rect"], view["window"]):
+        result.fail(f"{item['id']}: stats tip runs off screen at {[round(v) for v in tips[0]['rect']]}")
+    elif share_covered(item["rect"], tips[0]["rect"]) > 0.05:
+        result.fail(f"{item['id']}: stats tip covers {share_covered(item['rect'], tips[0]['rect']):.0%} of the item")
+    else:
+        result.note(f"{item['id']}: tip {' / '.join(wanted)} ✓")
+
+
+def reward_cards(view):
+    return [c for c in view["cards"] if c["on_screen"] and in_context(c, "NCardRewardSelectionScreen")]
+
+
+def scenario_personal_card_reward(result, tiers):
+    """Personal stats: card reward badges and Skip show your counts, the tip spells them out.
+    Then tier badges with the stats tips on, and off."""
+    ensure_stats(True, "personal")
+    open_card_reward()
+    view = inspect()
+    cards = reward_cards(view)
+    runs = fixture_runs(view["character"], [("reward", "cards", c["id"]) for c in cards])
+    try:
+        write_test_history(runs)
+        history = count_history(runs, view["character"])
+        view = inspect()
+        result.screenshots.append(screenshot("personal_card_reward"))
+        items = [(c["id"], "reward", "cards") for c in cards] + [("SKIP", "skip", "skip")]
+        check_personal_badges(result, view, history, "NCardRewardSelectionScreen", items)
+        for n, card in enumerate(cards):
+            check_personal_tip(result, card, "reward", "cards", history, f"personal_card_reward_tip{n}")
+        skip = next((b for b in view["badges"] if b["item_id"] == "SKIP" and b["visible"]), None)
+        if skip:
+            x, y, w, h = skip["rect"]
+            check_personal_tip(result, {"id": "SKIP", "rect": [x, y + h, w, h * 1.5]}, "skip", "skip", history, "personal_skip_tip")
+        hover(10, 10)
+        act("skip_card_reward")
+
+        # Tier badges, your stats in the tips all the same.
+        set_setting("cards", "tiers")
+        open_card_reward()
+        view = inspect()
+        cards = reward_cards(view)
+        runs = fixture_runs(view["character"], [("reward", "cards", c["id"]) for c in reversed(cards)])
+        write_test_history(runs)
+        history = count_history(runs, view["character"])
+        view = inspect()
+        result.note("tier badges, stats tips on:")
+        if any(b["kind"] == "stats" and b["visible"] for b in view["badges"]):
+            result.fail("stats badges with the badges on the tier list")
+        check_badges(result, view, tiers, "cards", "NCardRewardSelectionScreen")
+        enough = [c for c in cards if history["counts"].get(("reward", c["id"]), [0, 0])[1]]
+        if enough:
+            check_personal_tip(result, enough[0], "reward", "cards", history, "personal_tips_tier_badges")
+        hover(10, 10)
+        act("skip_card_reward")
+
+        # Stats tips off: no stats tip, the tier list's tip stays.
+        set_setting("stats_tips", False)
+        open_card_reward()
+        view = inspect()
+        cards = reward_cards(view)
+        runs = fixture_runs(view["character"], [("reward", "cards", c["id"]) for c in reversed(cards)])
+        write_test_history(runs)
+        history = count_history(runs, view["character"])
+        enough = [c for c in cards if history["counts"].get(("reward", c["id"]), [0, 0])[1]]
+        if enough:
+            tips, _ = hovered_stats_tips(enough[0])
+            result.screenshots.append(screenshot("personal_tips_off"))
+            if tips:
+                result.fail(f"{enough[0]['id']}: a stats tip with stats tips off")
+            else:
+                result.note("stats tips off: no stats tip ✓")
+            check_tip(result, tiers, enough[0])
+        hover(10, 10)
+        act("skip_card_reward")
+    finally:
+        remove_test_history()
+        set_setting("stats_tips", True)
+
+
+def scenario_personal_shop(result, tiers):
+    """Personal stats: shop cards, relics, potions and card removal show your counts."""
+    ensure_stats(True, "personal")
+    view, _ = open_shop("personal_shop_before")
+    shown = lambda kind: [i for i in view[kind] if in_context(i, "NMerchantInventory") and i["on_screen"]]
+    offers = ([("shop", "cards", c["id"]) for c in shown("cards")] + [("shop", "relics", r["id"]) for r in shown("relics")]
+              + [("shop", "potions", p["id"]) for p in shown("potions")])
+    runs = fixture_runs(view["character"], offers)
+    try:
+        write_test_history(runs)
+        history = count_history(runs, view["character"])
+        view = inspect()
+        result.screenshots.append(screenshot("personal_shop"))
+        items = [(i, "shop", g) for _, g, i in offers] + [("CARD_REMOVAL", "remove", "remove")]
+        check_personal_badges(result, view, history, "NMerchantInventory", items)
+        check_prices_clear(result)
+        for group in ("cards", "relics", "potions"):
+            # The second of a kind.
+            items = shown(group)
+            if len(items) > 1:
+                check_personal_tip(result, items[1], "shop", group, history, f"personal_shop_{group}_tip")
+        # The removal slot's coin, above its badge.
+        removal = next((b for b in view["badges"] if b["item_id"] == "CARD_REMOVAL" and b["visible"]), None)
+        if removal:
+            x, y, w, h = removal["rect"]
+            check_personal_tip(result, {"id": "CARD_REMOVAL", "rect": [x, y - 3 * h, w, 2 * h]}, "remove", "remove", history,
+                               "personal_shop_removal_tip")
+        hover(10, 10)
+
+        # Sample sizes add how many of your runs the numbers come from.
+        set_setting("stats_samples", True)
+        view, _ = open_shop("personal_shop_samples")
+        items = [c for c in view["cards"] if in_context(c, "NMerchantInventory") and c["on_screen"]]
+        runs = fixture_runs(view["character"], [("shop", "cards", c["id"]) for c in items])
+        write_test_history(runs)
+        history = count_history(runs, view["character"])
+        if len(items) > 1:
+            check_personal_tip(result, items[1], "shop", "cards", history, "personal_shop_samples_tip")
+            tips, _ = hovered_stats_tips(items[1])
+            want = f"Based on {history['runs']} runs at Ascension 7+"
+            if tips and want not in " ".join(tips[0]["text"].split()):
+                result.fail(f"sample sizes: the tip lacks {want!r}: {tips[0]['text'][:200]!r}")
+        hover(10, 10)
+    finally:
+        remove_test_history()
+        set_setting("stats_samples", False)
+
+
+def scenario_personal_ancient(result, tiers):
+    """Personal stats: ancient options show your counts."""
+    ensure_stats(True, "personal")
+    open_ancient()
+    time.sleep(2)
+    hover(10, 10)
+    view = inspect()
+    options = [r for r in view["relics"] if r["type"] == "NEventOptionButton" and fully_inside(r["rect"], view["window"])]
+    runs = fixture_runs(view["character"], [("ancient", "relics", o["id"]) for o in options])
+    try:
+        write_test_history(runs)
+        history = count_history(runs, view["character"])
+        view = inspect()
+        shot = screenshot("personal_ancient")
+        result.screenshots.append(shot)
+        check_personal_badges(result, view, history, "NEventRoom", [(o["id"], "ancient", "relics") for o in options])
+        check_badges_on_box_top(result, view, shot)
+        for i, option in enumerate(options):
+            check_personal_tip(result, option, "ancient", "relics", history, f"personal_ancient_tip{i}")
+        hover(10, 10)
+    finally:
+        remove_test_history()
+
+
+SCENARIOS = {
+    "personal_card_reward": scenario_personal_card_reward,
+    "personal_shop": scenario_personal_shop,
+    "personal_ancient": scenario_personal_ancient,
+}

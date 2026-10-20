@@ -16,5 +16,5 @@ done
 
 # ast.parse rather than py_compile, which leaves __pycache__ behind.
 python3 -c 'import ast, sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' \
-    "$repo/tools/check.py" "$repo/tools/dev.py" "$repo/tools/autopilot.py" ||
+    "$repo"/tools/*.py "$repo"/tools/checklib/*.py ||
     { echo "pre-commit: Python syntax error" >&2; exit 1; }
