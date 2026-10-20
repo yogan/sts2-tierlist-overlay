@@ -7,3 +7,4 @@
 - Game log: `~/Library/Application Support/SlayTheSpire2/logs/godot.log`.
 - Once per clone: `git config core.hooksPath .githooks` (builds both mods before each commit).
 - After a game update or for tier list data questions: `docs/UPDATING.md`.
+- Before writing text shown in the game (badges, tips, settings, hints): `docs/UI_TEXT.md`.
