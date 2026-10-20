@@ -10,25 +10,46 @@ Baalorlord and Jorbs tier lists from Untapped.gg and was inspired by the Untappe
   options.
 - **Commentary** from the list's author in an extra hover tip, and a mark on cards that are a
   good upgrade.
+- **Personal stats**, if you like: how often you took an item when it was offered in your own
+  past runs (see below).
 - **Settings** in a *Tier List* tab of the game's settings: what the badges on cards, relics,
-  potions and deck screens show (none, the tier list, or global stats), Baalorlord's or Jorbs'
-  list, the commentary tips, and the Untapped.gg login. Jorbs rates cards only, so relics and
-  potions always use Baalorlord's lists.
+  potions and deck screens show (none, the tier list, personal stats or global stats),
+  Baalorlord's or Jorbs' list, the commentary and stats tips, and the Untapped.gg login. Jorbs
+  rates cards only, so relics and potions always use Baalorlord's lists.
 
 The lists are fetched for the installed game version at game start and cached next to the mod,
 so it also works offline.
+
+### Personal stats
+
+Set the badges to *Personal stats* to see your own habits: how often you picked a card from a
+card reward ("Pick 3/10"), picked Skip on a card reward, chose an ancient's relic, or bought a
+card, relic or potion in the shop ("Buy 2/6"), and how often you paid for a card removal. The
+hover tip adds the share, in how many of your wins the card or relic ended up in your deck or
+relics, and how often you took it with your other characters. The numbers come from the game's
+own run history, the same files its Run History screen reads, for the current profile (modded
+and unmodded runs together). Runs count at Ascension 7+, in standard mode, alone, with the
+character you're playing. An item you never took there reads *Unpicked*, to try something new.
+Its tip says how often you passed it over, and whether you took it in runs below Ascension 7.
+Screens without personal stats (treasure, loot, upgrades, deck screens) show the tier list. The
+mod only reads the history. It never changes it, and it records nothing of its own. A finished
+run counts from the next screen on.
+
+*Stats in hover tips* (on by default) shows your stats, and other players' when logged in, in
+an extra hover tip whatever the badges show.
 
 ### Optional: Untapped.gg stats
 
 With an Untapped.gg account, the badges can show Untapped.gg's global stats instead of tiers:
 how often players picked (or bought, or upgraded) an item, and how the act's and the run's
-winrate changed when they did. They're shown on card rewards (including Skip), ancient
-options, the shop (including card removal) and the rest site's upgrade screen. The hover tips
-spell them out, with the tier list rating below. To turn it on, press *Log in* at the bottom of
-the *Tier List* tab (it opens Untapped.gg's login in the browser), then set the badges to
-*Global stats*. Screens without stats show the tier list. The login is kept in `account.cfg`
-next to the mod. *Log out* deletes it. Without a login, or when Untapped.gg is unreachable, the
-mod shows tiers as before. The mod only reads these stats. It sends none of your runs.
+winrate changed when they did. They're shown on card rewards (including Skip), ancient options,
+the shop (including card removal) and the rest site's upgrade screen. The hover tips spell them
+out, below your own stats, with the tier list rating below them. To turn it on, press *Log in*
+at the bottom of the *Tier List* tab (it opens Untapped.gg's login in the browser), then set
+the badges to *Global stats*. Items with too little data show no badge, and screens without
+stats show the tier list. The login is kept in `account.cfg` next to the mod. *Log out* deletes
+it. Without a login, or when Untapped.gg is unreachable, the mod shows tiers as before. The mod
+only reads these stats. It sends none of your runs.
 
 ## Requirements
 

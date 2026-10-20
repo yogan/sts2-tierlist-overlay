@@ -13,8 +13,9 @@ using MegaCrit.Sts2.Core.Nodes.HoverTips;
 namespace TierListOverlay;
 
 /// <summary>
-/// Adds the author's tier and commentary, and the item's stats when its badge shows them, as
-/// more hover tips in the game's own tip style whenever the game shows hover tips for the item.
+/// Adds the author's tier and commentary, and the item's stats (the player's own and
+/// Untapped.gg's), as more hover tips in the game's own tip style whenever the game shows hover
+/// tips for the item.
 /// </summary>
 internal static class Tips
 {
@@ -62,7 +63,7 @@ internal static class Tips
             var isCard = badge.GetParent() is NCard;
             var stats = Badges.StatsFor(badge);
             var added = false;
-            if (stats != null)
+            if (stats != null && Settings.StatsTips)
             {
                 AddStatsTip(container, itemId, stats, characterId);
                 added = true;
@@ -124,12 +125,17 @@ internal static class Tips
 
     private static readonly string Dim = Colour(new Color("#a0a8aa"));
 
-    // Lines as players read them: what share took the item, how the act's and the run's
-    // winrate changed when they did, and (if wanted) how many offers that is based on. Only
-    // items with stats get a stats badge, so there is always something to show.
+    private static readonly string Heading = Colour(StsColors.gold);
+    private static readonly System.Globalization.CultureInfo Numbers = System.Globalization.CultureInfo.InvariantCulture;
+
+    // One tip, your numbers first, then Untapped.gg's, each where there are some. Lines as
+    // players read them: how often the item was taken (or, never taken, how often passed over),
+    // then (yours) how many of your wins ended with it, or (Untapped.gg's) how the act's and the
+    // run's winrate changed when players took it, and (if wanted) what that is based on.
     private static void AddStatsTip(Container container, string itemId, StatsInfo info, string? characterId)
     {
-        var (kind, stats, act) = info;
+        var (kind, global, act, mine) = info;
+        var removal = itemId == TierListOverlayMod.RemoveId;
         var (title, took, offers) = kind switch
         {
             StatsKind.Skip => ("Skip Stats", "Picked instead of a card", "Card Rewards"),
@@ -138,21 +144,65 @@ internal static class Tips
             StatsKind.Upgrade => ("Card Upgrade Stats", "Picked to upgrade", "Smith Events"),
             _ => ("Card Reward Stats", "Picked when offered", "Card Rewards"),
         };
-        var lines = new List<string> { $"{Badges.Percent(stats.ActionPct!.Value)} {took}" };
-        if (act < 3)
-            lines.Add(Winrate(stats.ActDelta, stats.ActTier, "Act Winrate"));
-        lines.Add(Winrate(stats.RunDelta, stats.RunTier, "Run Winrate"));
-        if (Settings.StatsSamples)
+        // Both are the character's stats: "Your Ironclad runs", "Other players' Ironclad runs".
+        var character = characterId == null ? "" : Capital(characterId.ToLowerInvariant()) + " ";
+        var lines = new List<string>();
+        if (mine != null)
         {
-            var character = characterId == null ? "" : ", " + char.ToUpperInvariant(characterId[0]) + characterId[1..].ToLowerInvariant();
-            lines.Add($"[color={Dim}]Based on {stats.TimesOffered.ToString("N0", System.Globalization.CultureInfo.InvariantCulture)} Act {Math.Min(act, 3)} {offers} (Ascension 7+{character})[/color]");
+            lines.Add($"[color={Heading}]Your {character}runs[/color]");
+            var verb = kind switch
+            {
+                // "Skipped" on the Skip button reads both ways.
+                StatsKind.Skip => "picked Skip",
+                _ when removal => "removed",
+                StatsKind.Shop => "bought",
+                _ => "picked",
+            };
+            if (mine.Unpicked)
+            {
+                lines.Add(mine.Offered == 0 ? "Never offered yet" : $"Never {verb} in {mine.Offered} {(mine.Offered == 1 ? "offer" : "offers")}");
+                if (mine.LowerRuns > 0)
+                    lines.Add($"But {verb} in {mine.LowerRuns} {(mine.LowerRuns == 1 ? "run" : "runs")} below Ascension 7");
+            }
+            else
+            {
+                var share = Badges.Percent(100.0 * mine.Taken / mine.Offered);
+                lines.Add($"{Capital(verb)} {mine.Taken} of {mine.Offered} ({share})");
+                if (mine.InWins is { } inWins)
+                    lines.Add($"In {inWins} of your {mine.Wins} {(mine.Wins == 1 ? "win" : "wins")}");
+            }
+            if (mine.OthersOffered > 0)
+                lines.Add($"[color={Dim}]Other characters: {mine.OthersTaken} of {mine.OthersOffered}[/color]");
+            if (Settings.StatsSamples)
+                lines.Add($"[color={Dim}]Based on {mine.Runs.ToString("N0", Numbers)} runs at Ascension 7+[/color]");
+        }
+        if (global != null)
+        {
+            lines.Add(global.AllCharacters
+                ? $"[color={Heading}]Other players, all characters[/color]"
+                : $"[color={Heading}]Other players' {character}runs[/color]");
+            lines.Add($"{Badges.Percent(global.ActionPct!.Value)} {took}");
+            // The server leaves out winrates until enough players took the item.
+            var showAct = act < 3;
+            if (global.RunDelta == null && (global.ActDelta == null || !showAct))
+                lines.Add($"[color={Dim}]Winrates: too little data[/color]");
+            else
+            {
+                if (showAct)
+                    lines.Add(Winrate(global.ActDelta, global.ActTier, "Act Winrate"));
+                lines.Add(Winrate(global.RunDelta, global.RunTier, "Run Winrate"));
+            }
+            if (Settings.StatsSamples)
+                lines.Add($"[color={Dim}]Based on {global.TimesOffered.ToString("N0", Numbers)} Act {Math.Min(act, 3)} {offers} at Ascension 7+[/color]");
         }
         AddTip(container, StatsTipGroup, itemId, title, string.Join("\n", lines));
     }
 
+    private static string Capital(string word) => char.ToUpperInvariant(word[0]) + word[1..];
+
     private static string Winrate(double? delta, string? tier, string label) =>
         delta == null
-            ? $"[color={Dim}]—[/color] {label}"
+            ? $"[color={Dim}]{label}: too little data[/color]"
             : $"[color={Colour((Badges.TierColour(tier) ?? new Color("#888888")).Lightened(0.25f))}]{Badges.Percent(delta.Value, signed: true)}[/color] {label}";
 
     /// <summary>A setting's explanation, where the game shows its own settings' tips.</summary>
@@ -174,8 +224,8 @@ internal static class Tips
     }
 
     /// <summary>
-    /// The game shows no hover tips for the card reward's Skip button. While it has a stats
-    /// badge, give it a tip set of its own for the stats tip.
+    /// The game shows no hover tips for the card reward's Skip button. While it has stats, give
+    /// it a tip set of its own for the stats tip.
     /// </summary>
     public static void ShowOnFocus(NClickableControl button)
     {
@@ -184,7 +234,7 @@ internal static class Tips
         button.SetMeta(FocusMeta, true);
         button.Connect(NClickableControl.SignalName.Focused, Callable.From<NClickableControl>(b =>
         {
-            if (b.GetNodeOrNull<Control>(Badges.BadgeName) is { } badge && Badges.StatsFor(badge) != null)
+            if (Settings.StatsTips && b.GetNodeOrNull<Control>(Badges.BadgeName) is { } badge && Badges.StatsFor(badge) != null)
                 NHoverTipSet.CreateAndShow(b, Array.Empty<IHoverTip>(), HoverTipAlignment.Right);
         }));
         button.Connect(NClickableControl.SignalName.Unfocused, Callable.From<NClickableControl>(NHoverTipSet.Remove));

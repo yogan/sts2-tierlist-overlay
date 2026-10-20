@@ -9,6 +9,8 @@ internal enum BadgeMode
 {
     None,
     Tiers,
+    // The player's own numbers from their run history on the screens that have them, tiers elsewhere.
+    Personal,
     // Untapped.gg's stats where it has them (and the login works), tiers elsewhere.
     Global,
 }
@@ -37,7 +39,9 @@ internal static class Settings
     public const string DeckKey = "deck";
     public const string AuthorKey = "author";
     public const string CommentaryKey = "commentary";
-    // How many offers the stats are based on, in the stats tips.
+    // The player's and Untapped.gg's stats as hover tips, whatever the badges show.
+    public const string StatsTipsKey = "stats_tips";
+    // How many offers or runs the stats are based on, in the stats tips.
     public const string StatsSamplesKey = "stats_samples";
 
     private static readonly Dictionary<string, Variant> Defaults = new()
@@ -48,6 +52,7 @@ internal static class Settings
         [DeckKey] = Value(BadgeMode.Tiers),
         [AuthorKey] = Baalorlord,
         [CommentaryKey] = true,
+        [StatsTipsKey] = true,
         [StatsSamplesKey] = false,
     };
 
@@ -144,14 +149,12 @@ internal static class Settings
     public static bool Deck => Chosen(DeckKey) != BadgeMode.None;
     public static string Author => Get(AuthorKey).AsString() == Jorbs ? Jorbs : Baalorlord;
     public static bool Commentary => Get(CommentaryKey).AsBool();
+    public static bool StatsTips => Get(StatsTipsKey).AsBool();
     public static bool StatsSamples => Get(StatsSamplesKey).AsBool();
 
     /// <summary>Whether any badge is set to global stats, shown or not (without a login).</summary>
     public static bool AnyGlobalChosen =>
         Chosen(CardsKey) == BadgeMode.Global || Chosen(RelicsKey) == BadgeMode.Global || Chosen(PotionsKey) == BadgeMode.Global;
-
-    /// <summary>Whether any badge shows global stats.</summary>
-    public static bool AnyGlobal => Cards == BadgeMode.Global || Relics == BadgeMode.Global || Potions == BadgeMode.Global;
 
     /// <summary>Whether tiers show anywhere (badges, fallbacks or tips), so the choice of list matters.</summary>
     public static bool AnyTiers => Cards != BadgeMode.None || Relics != BadgeMode.None || Potions != BadgeMode.None || Deck || Commentary;

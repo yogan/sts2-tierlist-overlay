@@ -23,10 +23,12 @@ internal enum Placement
 /// One part of a badge: the value, optionally with a small label above it ("Pick"), and a
 /// colour its face shades into towards the bottom (the value's tier).
 /// </summary>
-internal sealed record Segment(string? Label, string Text, Color? Shade = null, bool Dim = false);
+/// `Ink`: the text's own colour instead of the light default.
+internal sealed record Segment(string? Label, string Text, Color? Shade = null, bool Dim = false, Color? Ink = null);
 
 /// <summary>
-/// What a badge shows: a tier ("A-Tier") or stats ("Pick 29% | Act +5% | Run +1%").
+/// What a badge shows: a tier ("A-Tier"), global stats ("Pick 29% | Act +5% | Run +1%") or
+/// the player's own ("Pick 3/10").
 /// `Tier` is the item's tier list tier, if any. Tools read it.
 /// </summary>
 /// `Hidden`: in place but not drawn, so the item's hover tips still find it.
@@ -76,21 +78,29 @@ internal static class Badges
 
     public static Color? TierColour(string? tier) => tier != null && TierColours.TryGetValue(tier, out var c) ? c : null;
 
-    /// <summary>"29%" for a share, "+5%" or "-3%" for a change.</summary>
+    /// <summary>
+    /// "29%" for a share, "+5%" or "-3%" for a change. A share that is neither none nor all
+    /// never rounds to either: "&lt;1%", "&gt;99%".
+    /// </summary>
     public static string Percent(double value, bool signed = false)
     {
         var rounded = (int)Math.Round(value, MidpointRounding.AwayFromZero);
+        if (!signed && rounded == 0 && value > 0)
+            return "<1%";
+        if (!signed && rounded == 100 && value < 100)
+            return ">99%";
         return (signed && rounded >= 0 ? "+" : "") + rounded + "%";
     }
 
     /// <summary>
     /// Pick (or Buy, Upgr.) / Act / Run, as the stats tip spells out. The act's winrate is left
     /// out in the last act, where it is the run's. `tier` is the item's tier list tier, if any.
-    /// Only for stats with data (StatEntry.HasData).
+    /// Only for global stats with data (StatEntry.HasData).
     /// </summary>
     public static BadgeContent ForStats(string itemId, StatsInfo info, string tier)
     {
-        var (kind, stats, act) = info;
+        var (kind, global, act, _) = info;
+        var stats = global!;
         var lastAct = act >= 3;
         var label = kind switch
         {
@@ -104,6 +114,33 @@ internal static class Badges
         segments.Add(Winrate("Run", stats.RunDelta, stats.RunTier));
         return new(itemId, StatsKindName, tier, StatsColour, segments.ToArray(), info);
     }
+
+    /// <summary>
+    /// The player's own numbers as counts: how often they took the item of how often it was
+    /// offered ("Pick 3/10", "Buy 2/6"). Skip too is "Pick": how often it was the pick. Only for
+    /// items with them (StatsInfo.Mine).
+    /// </summary>
+    public static BadgeContent ForPersonal(string itemId, StatsInfo info, string tier)
+    {
+        var mine = info.Mine!;
+        var label = info.Kind switch
+        {
+            StatsKind.Shop => "Buy",
+            _ => "Pick",
+        };
+        return new(itemId, StatsKindName, tier, StatsColour, new[] { new Segment(label, $"{mine.Taken}/{mine.Offered}") }, info);
+    }
+
+    /// <summary>
+    /// An item the player never took at Ascension 7+, to try: a count badge with gold text,
+    /// "Unpicked". The tip says whether lower runs took it.
+    /// </summary>
+    public static BadgeContent ForUnpicked(string itemId, StatsInfo info, string tier) =>
+        new(itemId, StatsKindName, tier, StatsColour, new[] { new Segment(null, "Unpicked", Ink: MegaCrit.Sts2.Core.Helpers.StsColors.gold) }, info);
+
+    /// <summary>No badge to see, only the stats for the item's hover tip (Skip and card removal, which have no tier).</summary>
+    public static BadgeContent ForTipOnly(string itemId, StatsInfo info) =>
+        new(itemId, StatsKindName, "", StatsColour, new[] { new Segment(null, "") }, info, Hidden: true);
 
     private static Segment Winrate(string label, double? delta, string? tier) =>
         delta == null ? new Segment(label, "—", Dim: true) : new Segment(label, Percent(delta.Value, signed: true), TierColour(tier));
@@ -212,8 +249,10 @@ internal static class Badges
             column.AddThemeConstantOverride("separation", -Mathf.RoundToInt(fontSize * 0.3f));
             part.AddChild(column);
             if (segment.Label != null)
-                column.AddChild(Text(segment.Label, font, Mathf.RoundToInt(fontSize * 0.65f), content.Colour, outline: 2));
-            column.AddChild(Text(segment.Text, font, fontSize, segment.Shade ?? content.Colour, segment.Dim ? DimText : null));
+                // Small and without an outline, which at this size fills the letters and blurs
+                // them when the game renders below the screen's resolution (in a window).
+                column.AddChild(Text(segment.Label, font, Mathf.RoundToInt(fontSize * 0.75f), content.Colour, outline: 0));
+            column.AddChild(Text(segment.Text, font, fontSize, segment.Shade ?? content.Colour, segment.Dim ? DimText : segment.Ink));
             row.AddChild(part);
         }
 
@@ -226,7 +265,7 @@ internal static class Badges
         return badge;
     }
 
-    // `outline`: thinner for small text, which a thick outline smudges.
+    // `outline`: thinner (or none) for small text, which a thick outline smudges.
     private static Label Text(string text, Font? font, int size, Color colour, Color? textColour = null, int? outline = null)
     {
         var label = new Label { Text = text, MouseFilter = Control.MouseFilterEnum.Ignore, HorizontalAlignment = HorizontalAlignment.Center };

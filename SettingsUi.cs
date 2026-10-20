@@ -32,64 +32,75 @@ internal static class SettingsUi
     // The plain button: the game's NSettingsButton cannot run without a subclass of its own.
     private const string ButtonScript = "res://src/Core/Nodes/GodotExtensions/NButton.cs";
 
-    // A row: settings.cfg key, label, hover tip (title and text), and whether it applies with
-    // the other settings and the login as they are. `Group`: the first row of a group, which
-    // gets a divider above it.
-    private abstract record Row(string Key, string Label, string TipTitle, string Tip, Func<bool> Applies, bool Group = false);
+    // A row: settings.cfg key, label, hover tip (title and text, made when shown, as it can
+    // depend on the login), and whether it applies with the other settings and the login as
+    // they are. `Group`: the first row of a group, which gets a divider above it.
+    private abstract record Row(string Key, string Label, string TipTitle, Func<string> Tip, Func<bool> Applies, bool Group = false)
+    {
+        public virtual string TipText => Tip();
+    }
 
-    private sealed record Toggle(string Key, string Label, string TipTitle, string Tip, Func<bool> Applies, bool Group = false)
+    private sealed record Toggle(string Key, string Label, string TipTitle, Func<string> Tip, Func<bool> Applies, bool Group = false)
         : Row(Key, Label, TipTitle, Tip, Applies, Group);
 
     // A left/right choice. An option can be unavailable for now (global stats without a login).
-    // A chosen one that is unavailable shows as `Fallback` but stays chosen.
-    private sealed record Option(string Value, string Label, Func<bool>? Available = null);
+    // A chosen one that is unavailable shows as `Fallback` but stays chosen. `Tip`: the option's
+    // line in the row's tip, while it is offered.
+    private sealed record Option(string Value, string Label, Func<bool>? Available = null, string? Tip = null)
+    {
+        public bool Offered => Available?.Invoke() ?? true;
+    }
 
-    private sealed record Choice(string Key, string Label, string TipTitle, string Tip, Func<bool> Applies, Option[] Options, string Fallback = "", bool Group = false)
-        : Row(Key, Label, TipTitle, Tip, Applies, Group);
+    private sealed record Choice(string Key, string Label, string TipTitle, Func<string> Tip, Func<bool> Applies, Option[] Options, string Fallback = "", bool Group = false)
+        : Row(Key, Label, TipTitle, Tip, Applies, Group)
+    {
+        public override string TipText =>
+            string.Join("\n", Options.Where(o => o.Offered && o.Tip != null).Select(o => $"[gold]{o.Label}[/gold]: {o.Tip}").Prepend(Tip()));
+    }
 
     // The login, with a button to log in or out.
-    private sealed record AccountRow(string Key, string Label, string TipTitle, string Tip, bool Group)
+    private sealed record AccountRow(string Key, string Label, string TipTitle, Func<string> Tip, bool Group)
         : Row(Key, Label, TipTitle, Tip, () => true, Group);
 
     private static readonly Option None = new(Settings.Value(BadgeMode.None), "None");
-    private static readonly Option Tiers = new(Settings.Value(BadgeMode.Tiers), "Tier list");
-    private static readonly Option Global = new(Settings.Value(BadgeMode.Global), "Global stats", () => Account.Usable);
+    private static readonly Option Tiers = new(Settings.Value(BadgeMode.Tiers), "Tier list", Tip: "the list's rating.");
+    private static readonly Option Personal = new(Settings.Value(BadgeMode.Personal), "Personal stats",
+        Tip: "how often you took it in your own Ascension 7+ runs with this character.");
+    private static readonly Option Global = new(Settings.Value(BadgeMode.Global), "Global stats", () => Account.Usable,
+        "how often other players took it at Ascension 7+ with this character, and their win rates.");
+
+    private static readonly Option[] BadgeOptions = { None, Tiers, Personal, Global };
 
     private static readonly Row[] Rows =
     {
-        new Choice(Settings.CardsKey, "Badges on cards", "Badges on cards",
-            "On the cards you are offered.\n[gold]Tier list[/gold]: the list's rating, S to F.\n"
-            + "[gold]Global stats[/gold]: Untapped.gg's pick and win rates on card rewards, in the shop and when upgrading. "
-            + "Elsewhere the tier list. Needs the Untapped.gg login below.",
-            () => true, new[] { None, Tiers, Global }, Tiers.Value),
-        new Choice(Settings.RelicsKey, "Badges on relics", "Badges on relics",
-            "On the relics you are offered.\n[gold]Tier list[/gold]: the list's rating.\n"
-            + "[gold]Global stats[/gold]: Untapped.gg's buy and pick rates in the shop and from ancients. The tier list in "
-            + "treasure and loot. Needs the Untapped.gg login below.",
-            () => true, new[] { None, Tiers, Global }, Tiers.Value),
-        new Choice(Settings.PotionsKey, "Badges on potions", "Badges on potions",
-            "On the potions you are offered.\n[gold]Tier list[/gold]: the list's rating.\n"
-            + "[gold]Global stats[/gold]: Untapped.gg's buy rates in the shop. The tier list in loot. Needs the Untapped.gg "
-            + "login below.",
-            () => true, new[] { None, Tiers, Global }, Tiers.Value),
+        new Choice(Settings.CardsKey, "Badges on cards", "Badges on cards", () => "On cards you can pick or buy.",
+            () => true, BadgeOptions, Tiers.Value),
+        new Choice(Settings.RelicsKey, "Badges on relics", "Badges on relics", () => "On relics you can pick or buy.",
+            () => true, BadgeOptions, Tiers.Value),
+        new Choice(Settings.PotionsKey, "Badges on potions", "Badges on potions", () => "On potions you can pick or buy.",
+            () => true, BadgeOptions, Tiers.Value),
         new Choice(Settings.DeckKey, "Badges on deck screens", "Deck screens",
-            "The tier list's rating on the cards you have: deck view, remove, transform, enchant.",
+            () => "The tier list's rating on the cards you have: deck view, remove, transform, enchant.",
             () => true, new[] { None, Tiers }),
 
         new Choice(Settings.AuthorKey, "Tier list", "Tier list",
-            "Whose ratings the badges and tips show. Baalorlord rates cards, relics and potions. Jorbs rates cards only, "
-            + "so relics and potions keep Baalorlord's.",
+            () => "Whose ratings the badges and tips show. Jorbs rates cards only, so relics and potions keep Baalorlord's.",
             () => Settings.AnyTiers, new[] { new Option(Settings.Baalorlord, Settings.Baalorlord), new Option(Settings.Jorbs, Settings.Jorbs) },
             Group: true),
         new Toggle(Settings.CommentaryKey, "Tier list commentary in hover tips", "Commentary",
-            "An extra hover tip on rated items with the author's tier and commentary.", () => true),
+            () => "An extra hover tip on rated items with the author's tier and commentary.", () => true),
+        new Toggle(Settings.StatsTipsKey, "Stats in hover tips", "Stats tips",
+            () => $"An extra hover tip with your own stats{(Account.Usable ? " and other players'" : "")}, whatever the badges show.",
+            () => true),
 
         new Toggle(Settings.StatsSamplesKey, "Sample sizes in stats tips", "Sample sizes",
-            "Below the global stats, how many offers they are based on.", () => Settings.AnyGlobal, Group: true),
+            () => "Below the stats, how many runs and offers they are based on.", () => Settings.StatsTips, Group: true),
 
         new AccountRow(AccountKey, "Untapped.gg", "Untapped.gg",
-            "Logged in, badges can show the pick and win rates of Untapped.gg's players. The mod only reads these stats and "
-            + "sends none of your runs. Log in opens Untapped.gg in the browser.", Group: true),
+            () => (Account.Usable
+                ? "Badges and tips can show other players' pick and win rates."
+                : "Log in for other players' pick and win rates on badges and in tips.")
+                + " The mod only reads these stats and sends none of your runs.", Group: true),
     };
 
     private static readonly FieldInfo? TabsField = typeof(NSettingsTabManager).GetField("_tabs", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -309,7 +320,7 @@ internal static class SettingsUi
 
     private static void ShowTipOnHover(Control hovered, Control row, Row setting)
     {
-        hovered.Connect(Control.SignalName.MouseEntered, Callable.From(() => Tips.ShowForSetting(row, setting.TipTitle, setting.Tip)));
+        hovered.Connect(Control.SignalName.MouseEntered, Callable.From(() => Tips.ShowForSetting(row, setting.TipTitle, setting.TipText)));
         hovered.Connect(Control.SignalName.MouseExited, Callable.From(() => NHoverTipSet.Remove(row)));
     }
 
@@ -379,7 +390,7 @@ internal static class SettingsUi
     // Offers the options available now. The player paging to another saves it.
     private static void UpdateChoice(Shown shown, Choice choice)
     {
-        var offered = choice.Options.Where(o => o.Available?.Invoke() ?? true).ToArray();
+        var offered = choice.Options.Where(o => o.Offered).ToArray();
         var options = (List<string>)PaginatorOptionsField!.GetValue(shown.Paginator)!;
         if (!offered.SequenceEqual(shown.Offered))
         {

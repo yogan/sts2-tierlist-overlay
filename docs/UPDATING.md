@@ -48,6 +48,29 @@ fails until that constant is raised. The routine:
   colorless. A new character, or a list Untapped replaces with a new UUID, needs an entry
   there.
 
+## Personal stats
+
+- The mod reads the game's run history: one JSON file per finished run,
+  `<profile>/saves/history/<start time>.run`, under `steam/<id>/profileN/` for unmodded play
+  and `steam/<id>/modded/profileN/` for modded play (in the game's user data folder). The game
+  only reads the folder of the mode it runs in. The mod reads both, as plain JSON, and never
+  writes there. Files ending in `.backup` or `.corrupt` are the game's spares.
+- What it uses, per floor in `map_point_history` (`player_stats[0]`): `card_choices` with
+  `was_picked` (card rewards, rerolled ones included, unpicked), `ancient_choice` with `TextKey`
+  and `was_chosen`, and at shops (`map_point_type` `shop`) the unbought stock that leaving logs
+  as unpicked `card_choices`, `relic_choices` and `potion_choices`, bought cards in
+  `cards_gained`, bought relics and potions as picked entries, and `cards_removed`. Plus `win`,
+  `ascension`, `game_mode`, `players` and the final `deck` and `relics`. The history does not
+  log what the smith offered, so there are no personal upgrade stats.
+- Tested with `schema_version` 9 (game v0.107.1). A new schema version can rename fields. The
+  `personal_*` scenarios do not notice that (they write their own files), so after a game update
+  compare a fresh `.run` file with the fields above. Files the mod can't read are logged
+  (`Skipping run history file`), and every rescan logs `Run history: N runs, M counted, L lower`.
+- The `personal_*` scenarios write synthetic runs to `mods/TierListOverlay/test-history/`,
+  which the mod reads instead of the profile's history while it exists, and delete it after.
+  If a check is interrupted, delete that folder by hand, or the badges keep showing the test
+  numbers.
+
 ## Untapped.gg stats
 
 - The `stats_*` scenarios and `logged_out` need a login: log in once in the Tier List tab of the

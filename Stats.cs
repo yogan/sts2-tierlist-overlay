@@ -22,19 +22,24 @@ internal enum StatsKind
 /// How players who were offered an item did, from Untapped.gg's global stats (Ascension 7+):
 /// how often they took it (picked, bought or upgraded) and how the act's and the run's winrate
 /// changed when they did, each with a tier letter. Values are null where the server has too
-/// little data.
+/// little data. `AllCharacters`: the server had too little for the character and counted all
+/// characters' runs.
 /// </summary>
 internal sealed record StatEntry(
     double? ActionPct, string? ActionTier,
     double? ActDelta, string? ActTier,
     double? RunDelta, string? RunTier,
-    int TimesOffered)
+    int TimesOffered, bool AllCharacters = false)
 {
     public bool HasData => TimesOffered > 0 && ActionPct != null;
 }
 
-/// <summary>An item's stats as a badge and its tip show them. `Act` is 1 to 3 (or 4, after the last boss).</summary>
-internal sealed record StatsInfo(StatsKind Kind, StatEntry Entry, int Act);
+/// <summary>
+/// An item's stats as a badge and its tip show them: Untapped.gg's (`Global`, for `Act`, 1 to 3
+/// or 4 after the last boss) and the player's own (`Mine`), either of them null where there
+/// are none.
+/// </summary>
+internal sealed record StatsInfo(StatsKind Kind, StatEntry? Global, int Act, PersonalStats? Mine);
 
 /// <summary>The answer for one screen, by item group ("cards", "relics", "potions", "skip", "remove").</summary>
 internal sealed class StatsAnswer
@@ -179,8 +184,13 @@ internal static class Stats
             Number(e, action + "_pct"), Tier(e, action + "_tier"),
             Number(e, "win_ca_pct_delta"), Tier(e, "win_ca_tier"),
             Number(e, "win_pct_delta"), Tier(e, "win_tier"),
-            e.TryGetProperty("times_offered", out var n) && n.ValueKind == JsonValueKind.Number ? n.GetInt32() : 0);
+            e.TryGetProperty("times_offered", out var n) && n.ValueKind == JsonValueKind.Number ? n.GetInt32() : 0,
+            e.TryGetProperty("warnings", out var warnings) && warnings.ValueKind == JsonValueKind.Array
+                && warnings.EnumerateArray().Any(w => w.TryGetProperty("warning_enum", out var code) && code.ValueKind == JsonValueKind.Number && code.GetInt32() == WidenedScope));
     }
+
+    // The server's warning that it counted all characters ("Widened Scope Warning").
+    private const int WidenedScope = 5;
 
     private static double? Number(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetDouble() : null;

@@ -49,6 +49,7 @@ public static class TierListOverlayMod
         var modDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? ".";
         Settings.Load(Path.Combine(modDir, "settings.cfg"));
         Account.Load(Path.Combine(modDir, "account.cfg"));
+        History.Load(modDir);
         // Lists are made per game version, so ask for the installed one ("v0.107.1").
         var gameVersion = ReleaseInfoManager.Instance.ReleaseInfo?.Version;
         GD.Print($"[TierListOverlay] Game version {gameVersion ?? "unknown"}");
@@ -76,6 +77,7 @@ public static class TierListOverlayMod
         SettingsUi.OnProcessFrame();
         Hint.OnProcessFrame();
         Account.OnProcessFrame();
+        History.OnProcessFrame();
         // The game's model database may not be ready in the first frames. If so, try again.
         if (TierLists.Generation != _checkedGeneration && LogUnknownIds())
             _checkedGeneration = TierLists.Generation;
@@ -106,41 +108,66 @@ public static class TierListOverlayMod
         }
     }
 
-    // The badge for a node: its stats when they are wanted and available, otherwise its tier.
-    // Keep: stats are on their way. Leave the item's badge as it is until they arrive, so it
-    // does not flash from tier to stats. Not a badge left from another item on a reused node.
+    // The badge for a node: the stats the player chose where there are some, otherwise its
+    // tier. The stats it has (whichever the badge shows) go along for the hover tip.
+    // Keep: global stats are on their way. Leave the item's badge as it is until they arrive,
+    // so it does not flash from tier to stats. Not a badge left from another item on a reused
+    // node.
     private static (bool Keep, BadgeContent? Content) Content(Control node, string? characterId, string? itemId, BadgeMode mode)
     {
         if (itemId == null || mode == BadgeMode.None)
             return (false, null);
         var isCard = node is NCard;
         var tier = itemId is SkipId or RemoveId ? null : Lookup(characterId, itemId, isCard);
-        if (mode == BadgeMode.Global && StatsSlot(node) is var (screen, kind, group) && characterId != null)
+        var tierBadge = tier is var (id, tierEntry) ? Badges.ForTier(id, tierEntry, isCard && HasAncestor<NDeckUpgradeSelectScreen>(node)) : null;
+        if (characterId == null || StatsSlot(node) is not var (screen, kind, group))
+            return (false, tierBadge);
+        var statsId = itemId is SkipId or RemoveId ? Stats.SingleId : itemId;
+        var tips = Settings.StatsTips;
+        // The run history has no upgrade stats: the game does not log what the smith offered.
+        var mine = (mode == BadgeMode.Personal || tips) && kind != StatsKind.Upgrade ? History.Get(characterId, kind, group, statsId) : null;
+        if (mine is { Shown: false })
+            mine = null;
+        StatEntry? global = null;
+        var (act, answered) = (0, false);
+        if ((mode == BadgeMode.Global || tips) && Account.Usable && RequestFor(screen, characterId) is { } request)
         {
-            if (RequestFor(screen, characterId) is { } request)
+            act = request.Act;
+            switch (Stats.Get(request, out var answer))
             {
-                switch (Stats.Get(request, out var answer))
-                {
-                    case Stats.Lookup.Pending:
-                        var shown = node.GetNodeOrNull<Control>(Badges.BadgeName)?.GetMeta("item_id", "").AsString();
-                        return (shown == null || shown == itemId, null);
-                    case Stats.Lookup.Ready when answer!.Get(group, itemId is SkipId or RemoveId ? Stats.SingleId : itemId) is { } entry:
-                        if (entry.HasData)
-                            return (false, Badges.ForStats(itemId, new StatsInfo(kind, entry, request.Act), tier?.Entry.Tier ?? ""));
-                        // Too few runs for stats: no badge rather than one saying so. A hidden
-                        // tier badge still brings up the tier list's tip.
-                        return (false, tier is var (tierId, hiddenEntry) ? Badges.ForTier(tierId, hiddenEntry, false) with { Hidden = true } : null);
-                }
+                case Stats.Lookup.Pending when mode == BadgeMode.Global:
+                    var shown = node.GetNodeOrNull<Control>(Badges.BadgeName)?.GetMeta("item_id", "").AsString();
+                    return (shown == null || shown == itemId, null);
+                case Stats.Lookup.Ready:
+                    answered = true;
+                    global = answer!.Get(group, statsId) is { HasData: true } entry ? entry : null;
+                    // All characters' runs are the character's own for items only it can get.
+                    if (global is { AllCharacters: true } && OwnItem(group, itemId))
+                        global = global with { AllCharacters = false };
+                    break;
             }
         }
-        if (tier is var (id, tierEntry))
-            return (false, Badges.ForTier(id, tierEntry, isCard && HasAncestor<NDeckUpgradeSelectScreen>(node)));
-        return (false, null);
+        var info = mine != null || global != null ? new StatsInfo(kind, global, act, mine) : null;
+        var badge = mode switch
+        {
+            BadgeMode.Global when global != null => Badges.ForStats(itemId, info!, tier?.Entry.Tier ?? ""),
+            BadgeMode.Personal when mine != null => mine.Unpicked
+                ? Badges.ForUnpicked(itemId, info!, tier?.Entry.Tier ?? "")
+                : Badges.ForPersonal(itemId, info!, tier?.Entry.Tier ?? ""),
+            // Global stats, but too little data for this item: no badge rather than a tier beside
+            // the others' stats. A hidden tier badge still brings up the item's tips. Without any
+            // stats (no answer yet, offline, history not read) the whole screen shows tiers.
+            BadgeMode.Global when answered => tierBadge == null ? null : tierBadge with { Hidden = true },
+            _ => tierBadge,
+        };
+        if (info == null)
+            return (false, badge);
+        return (false, badge != null ? badge with { Stats = info } : tips ? Badges.ForTipOnly(itemId, info) : null);
     }
 
     // Item IDs for the two offers that are no items.
-    private const string SkipId = "SKIP";
-    private const string RemoveId = "CARD_REMOVAL";
+    internal const string SkipId = "SKIP";
+    internal const string RemoveId = "CARD_REMOVAL";
 
     // The screen whose stats request covers the node, which stats it gets, and its group in
     // the answer. Null on screens without stats (deck view, remove, transform, …).
@@ -260,13 +287,12 @@ public static class TierListOverlayMod
             };
             return (card.Model?.Id.Entry, mode, Placement.InsideBottom, CardBounds);
         }
-        // Skip and card removal have stats but no tier.
-        var statsOnly = Settings.Cards == BadgeMode.Global ? BadgeMode.Global : BadgeMode.None;
+        // Skip and card removal have stats but no tier, and go with the cards.
         if (node is NCardRewardAlternativeButton skip)
-            return (IsSkip(skip) ? SkipId : null, statsOnly, Placement.AboveTop, own);
+            return (IsSkip(skip) ? SkipId : null, Settings.Cards, Placement.AboveTop, own);
         // The slot's own rectangle is not where its coin is drawn, the hitbox is.
         if (node is NMerchantCardRemoval removal)
-            return (RemoveId, statsOnly, Placement.AcrossBottom,
+            return (RemoveId, Settings.Cards, Placement.AcrossBottom,
                 removal.Hitbox is { } hitbox ? new Rect2(hitbox.Position, hitbox.Size) : own);
         var (relics, potions) = (Settings.Relics, Settings.Potions);
         return node switch
@@ -348,6 +374,25 @@ public static class TierListOverlayMod
         if (LoggedUnrated.Add(itemId))
             GD.Print($"[TierListOverlay] No tier for {itemId}");
         return null;
+    }
+
+    // The IDs in the current character's own card, relic and potion pools, which no other
+    // character gets, by group ("cards", "relics", "potions").
+    private static (string Character, Dictionary<string, HashSet<string>> Ids)? _ownItems;
+
+    private static bool OwnItem(string group, string itemId)
+    {
+        var state = RunManager.Instance?.DebugOnlyGetState();
+        if (state == null || LocalContext.GetMe(state)?.Character is not { } character)
+            return false;
+        if (_ownItems?.Character != character.Id.Entry)
+            _ownItems = (character.Id.Entry, new Dictionary<string, HashSet<string>>
+            {
+                ["cards"] = character.CardPool.AllCardIds.Select(id => id.Entry).ToHashSet(),
+                ["relics"] = character.RelicPool.AllRelicIds.Select(id => id.Entry).ToHashSet(),
+                ["potions"] = character.PotionPool.AllPotionIds.Select(id => id.Entry).ToHashSet(),
+            });
+        return _ownItems.Value.Ids.TryGetValue(group, out var ids) && ids.Contains(itemId);
     }
 
     // The local player's character ("IRONCLAD"), or null outside a run.

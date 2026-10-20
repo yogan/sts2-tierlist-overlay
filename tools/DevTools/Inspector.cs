@@ -22,6 +22,7 @@ internal static class Inspector
     private const string BadgeGroup = "tierlist_badge";
     private const string TipGroup = "tierlist_tip";
     private const string StatsTipGroup = "tierlist_stats_tip";
+    private const string SettingTipGroup = "tierlist_setting_tip";
     private const string HintGroup = "tierlist_hint";
     private const string TipBadgeName = "TierListOverlayTipBadge";
 
@@ -111,10 +112,18 @@ internal static class Inspector
 
         var windowSize = DisplayServer.WindowGetSize();
         var runState = MegaCrit.Sts2.Core.Runs.RunManager.Instance?.DebugOnlyGetState();
+        var character = runState == null ? null : MegaCrit.Sts2.Core.Context.LocalContext.GetMe(runState)?.Character;
         return new Dictionary<string, object?>
         {
             ["window"] = new[] { windowSize.X, windowSize.Y },
-            ["character"] = runState == null ? null : MegaCrit.Sts2.Core.Context.LocalContext.GetMe(runState)?.Character.Id.Entry,
+            ["character"] = character?.Id.Entry,
+            // The IDs only this character gets, from its own pools.
+            ["own_items"] = character == null ? null : new Dictionary<string, object?>
+            {
+                ["cards"] = character.CardPool.AllCardIds.Select(id => id.Entry).ToList(),
+                ["relics"] = character.RelicPool.AllRelicIds.Select(id => id.Entry).ToList(),
+                ["potions"] = character.PotionPool.AllPotionIds.Select(id => id.Entry).ToList(),
+            },
             ["cards"] = cards,
             ["relics"] = relics,
             ["potions"] = potions,
@@ -122,6 +131,7 @@ internal static class Inspector
             ["hover_tips"] = hoverTips,
             ["tier_tips"] = Tips(TipGroup),
             ["stats_tips"] = Tips(StatsTipGroup),
+            ["setting_tips"] = Tips(SettingTipGroup),
             ["hints"] = hints,
         };
     }
