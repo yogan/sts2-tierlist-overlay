@@ -9,7 +9,8 @@ Each scenario sets up a screen through the dev console (DevTools mod), inspects 
 screen and asserts that every rated item shows the right badge (its tier, the Untapped.gg stats
 the API gives for the mod's own request, or the player's own counts from synthetic run history
 files), that tips and settings work, and that no
-badge is drawn on top of a hover tip. Screenshots go to .artifacts/ for a human look.
+badge is drawn on top of a hover tip. Screenshots go to .artifacts/ for a human look, each with
+a JSON of what is where on it (game.screenshot).
 
 Needs the game running with the STS2_MCP, DevTools and TierListOverlay mods, in modded
 profile 2 (the test profile), and for the stats scenarios an Untapped.gg login (see

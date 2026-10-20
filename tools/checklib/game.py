@@ -156,11 +156,33 @@ def hover_until(point, done, timeout=3.0):
             nudged = True
 
 
-def screenshot(name):
+def screenshot(name, layout=True):
+    """Saves the frame to .artifacts/NAME.png and, with `layout`, what is on it to NAME.json:
+    the window size and the rects of the items, badges and tips, so images made from it can
+    be cropped by what they show rather than by pixels."""
     ARTIFACTS.mkdir(exist_ok=True)
     path = ARTIFACTS / f"{name}.png"
     _request(f"{DEVTOOLS}/screenshot?path={path}")
+    if layout:
+        path.with_suffix(".json").write_text(json.dumps(screen_layout(inspect()), indent=1))
     return path
+
+
+def screen_layout(view):
+    """The parts of an inspect() view a showcase crop can name, visible and on screen only."""
+    shown = lambda things: [{**t, "rect": [round(v, 1) for v in t["rect"]]} for t in things
+                            if t.get("on_screen", True) and t.get("visible", True)]
+    return {
+        "taken": time.time(),
+        "window": view["window"],
+        "items": [{"kind": kind[:-1], "id": i["id"], "type": i["type"], "rect": i["rect"]}
+                  for kind in ("cards", "relics", "potions") for i in shown(view[kind])],
+        "badges": [{"id": b["item_id"], "label": b["label"], "rect": b["rect"]} for b in shown(view["badges"])],
+        # The game's tip panels, the mod's among them, and which of them are the mod's for an item.
+        "tips": [{"rect": t["rect"]} for t in shown(view["hover_tips"])],
+        "item_tips": [{"kind": kind.split("_")[0], "id": t["item_id"], "rect": t["rect"]}
+                      for kind in ("tier_tips", "stats_tips", "setting_tips") for t in shown(view[kind])],
+    }
 
 
 def wait_for(predicate, what, timeout=20.0):

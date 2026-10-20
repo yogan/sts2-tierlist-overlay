@@ -98,7 +98,8 @@ def cmd_shot(args):
         box = rects[int(index or 0)]
     elif args.crop:
         box = [float(v) for v in args.crop.split(",")]
-    path = game.screenshot(args.name)
+    # Cropped and scaled, the image no longer matches the layout check.py saves beside its shots.
+    path = game.screenshot(args.name, layout=False)
     image = Image.open(path).convert("RGB")
     if box:
         x, y, w, h = box
