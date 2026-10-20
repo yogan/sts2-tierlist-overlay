@@ -3,20 +3,27 @@
 With badges on personal stats, card rewards (and Skip), ancient options and the shop (and card
 removal) show how often the player took the item in their own runs. Real profiles are never
 touched: the checks write synthetic runs to the mod's test-history folder, which the mod then
-reads instead of the profile's history, and count them here the way the mod should."""
+reads instead of the profile's history, and count them here the way the mod should. Only
+personal_real reads a profile's history, to copy it there."""
 
 import json
 import shutil
 import time
+from pathlib import Path
 
-from .game import (MOD_DIR, act, hover, hover_until, inspect, log_length, log_since, open_ancient,
+from .game import (GAME_APP, MCP, MOD_DIR, CheckError, _request, act, hover, hover_until, inspect, log_length, log_since, open_ancient,
                    open_card_reward, open_shop, read_settings, screenshot, wait_for)
 from .geometry import centre, fully_inside, share_covered
 from .global_stats import percent
 from .settings import ensure_stats, set_setting
-from .verify import check_badges, check_badges_on_box_top, check_prices_clear, check_tip, in_context
+from .verify import (check_badges, check_badges_on_box_top, check_prices_clear, check_tip, in_context,
+                     wrapped_lines)
 
 TEST_HISTORY = MOD_DIR / "test-history"
+# The game's saves, one folder per Steam account, with profileN/ and modded/profileN/ in each.
+SAVES = Path.home() / "Library/Application Support/SlayTheSpire2/steam"
+# The run history schema_version that count_history (and History.cs) were checked against.
+KNOWN_SCHEMA = 9
 PREFIX = {"cards": "CARD.", "relics": "RELIC.", "potions": "POTION."}
 # Per kind: the badge's label, the tip's line (taken, offered, share).
 PERSONAL_KINDS = {
@@ -259,6 +266,8 @@ def check_personal_tip(result, item, kind, group, history, shot_name):
         result.fail(f"{item['id']}: other players' stats before yours: {text[:200]!r}")
     elif ("Based on" in text) != read_settings()["stats_samples"]:
         result.fail(f"{item['id']}: the tip {'lacks' if read_settings()['stats_samples'] else 'shows'} the sample size: {text[:200]!r}")
+    elif wrapped := wrapped_lines(tips[0]):
+        result.fail(f"{item['id']}: stats tip lines wrap: {wrapped}")
     elif not fully_inside(tips[0]["rect"], view["window"]):
         result.fail(f"{item['id']}: stats tip runs off screen at {[round(v) for v in tips[0]['rect']]}")
     elif share_covered(item["rect"], tips[0]["rect"]) > 0.05:
@@ -410,8 +419,63 @@ def scenario_personal_ancient(result, tiers):
         remove_test_history()
 
 
+def history_files(profile):
+    """A profile's run history files, unmodded and modded (the mod reads both), as
+    (copy name, path). Modded ones get a prefix, as both folders name files by start time."""
+    return sorted((f"{prefix}{f.name}", f) for account in SAVES.iterdir() if account.is_dir()
+                  for prefix, folder in (("", account / f"profile{profile}"), ("modded-", account / f"modded/profile{profile}"))
+                  for f in (folder / "saves/history").glob("*.run"))
+
+
+def scenario_personal_real(result, tiers):
+    """Personal stats from a copy of the active profile's real run history: the mod reads every
+    file, and a card reward's badges and tips match the counts here. Notices a game update that
+    changes the .run files, which the synthetic runs of the other personal_* scenarios can't."""
+    profile = _request(f"{MCP}/api/v1/profiles")["current_profile_id"]
+    files = history_files(profile)
+    if not files:
+        raise CheckError(f"profile {profile} has no run history yet: finish or abandon a run first (tools/check.py --new-run)")
+    runs = [json.loads(path.read_text()) for _, path in files]
+    schemas = sorted({run.get("schema_version") or 0 for run in runs})
+    if schemas[-1] > KNOWN_SCHEMA:
+        result.fail(f"run history schema {schemas[-1]}, the checks know {KNOWN_SCHEMA}: compare a new .run file with "
+                    "the fields in docs/UPDATING.md (Personal stats), then raise KNOWN_SCHEMA in checklib/personal.py")
+    game_version = json.loads((GAME_APP / "Contents/Resources/release_info.json").read_text())["version"]
+    if not any(run.get("build_id") == game_version for run in runs):
+        result.fail(f"no run from game {game_version} in profile {profile}'s history, so nothing in this game "
+                    "version's format: tools/check.py --new-run abandons the test run, which makes one")
+    ensure_stats(True, "personal")
+    open_card_reward()
+    try:
+        # Copies, read only: nothing is ever written to the profile's folders.
+        since = log_length()
+        shutil.rmtree(TEST_HISTORY, ignore_errors=True)
+        TEST_HISTORY.mkdir(parents=True)
+        for name, path in files:
+            (TEST_HISTORY / name).write_bytes(path.read_bytes())
+        wait_history_read(len(files), since)
+        skipped = [line.split("] ", 1)[-1] for line in log_since(since) if "Skipping run history file" in line]
+        if skipped:
+            result.fail(f"the mod could not read {len(skipped)} of {len(files)} files: {skipped[:3]}")
+        view = inspect()
+        history = count_history(runs, view["character"])
+        result.note(f"{len(files)} runs of profile {profile}, schema {schemas}, "
+                    f"{history['runs']} counted with {view['character']}, {history['wins']} won")
+        result.screenshots.append(screenshot("personal_real"))
+        cards = reward_cards(view)
+        check_personal_badges(result, view, history, "NCardRewardSelectionScreen",
+                              [(c["id"], "reward", "cards") for c in cards] + [("SKIP", "skip", "skip")])
+        for n, card in enumerate(cards):
+            check_personal_tip(result, card, "reward", "cards", history, f"personal_real_tip{n}")
+        hover(10, 10)
+        act("skip_card_reward")
+    finally:
+        remove_test_history()
+
+
 SCENARIOS = {
     "personal_card_reward": scenario_personal_card_reward,
     "personal_shop": scenario_personal_shop,
     "personal_ancient": scenario_personal_ancient,
+    "personal_real": scenario_personal_real,
 }

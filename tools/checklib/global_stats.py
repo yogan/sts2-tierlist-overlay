@@ -18,7 +18,7 @@ from .settings import (account_row, close_settings, ensure_stats, open_settings,
                        setting_tip, shown_value)
 from .tiers import scenario_deck_view
 from .verify import (ICON_TYPES, check_badges, check_badges_on_box_top, check_prices_clear, check_tooltip_layering,
-                     exhausted_relics, in_context)
+                     exhausted_relics, in_context, wrapped_lines)
 
 API = "https://api.sts2.untapped.gg"
 ACCOUNT = MOD_DIR / "account.cfg"
@@ -181,6 +181,8 @@ def check_stats_tip(result, item, entry, kind, act, shot_name):
     elif all_characters(entry, item, view) != ("all characters" in text):
         result.fail(f"{item['id']}: stats tip {'lacks' if all_characters(entry, item, view) else 'has'} 'all characters' "
                     f"(warnings {[w.get('warning_enum') for w in entry.get('warnings') or []]}): {text[:200]!r}")
+    elif wrapped := wrapped_lines(tip):
+        result.fail(f"{item['id']}: stats tip lines wrap: {wrapped}")
     elif not fully_inside(tip["rect"], view["window"]):
         result.fail(f"{item['id']}: stats tip runs off screen at {[round(v) for v in tip['rect']]}")
     elif share_covered(item["rect"], tip["rect"]) > 0.05:

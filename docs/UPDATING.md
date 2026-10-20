@@ -62,11 +62,16 @@ fails until that constant is raised. The routine:
   `cards_gained`, bought relics and potions as picked entries, and `cards_removed`. Plus `win`,
   `ascension`, `game_mode`, `players` and the final `deck` and `relics`. The history does not
   log what the smith offered, so there are no personal upgrade stats.
-- Tested with `schema_version` 9 (game v0.107.1). A new schema version can rename fields. The
-  `personal_*` scenarios do not notice that (they write their own files), so after a game update
-  compare a fresh `.run` file with the fields above. Files the mod can't read are logged
-  (`Skipping run history file`), and every rescan logs `Run history: N runs, M counted, L lower`.
-- The `personal_*` scenarios write synthetic runs to `mods/TierListOverlay/test-history/`,
+- Tested with `schema_version` 9 (game v0.107.1). A new schema version can rename fields.
+  `personal_real` notices: it copies the active profile's history (test profile 2) into
+  `test-history/`, fails when the mod skips a file, when a file has a newer schema than
+  `KNOWN_SCHEMA` (`tools/checklib/personal.py`) or when no run is from the installed game
+  version, and compares a card reward's badges and tips with its own count. `tools/check.py
+  --new-run` makes a run in the new version (it abandons the test run). With a newer schema,
+  compare a fresh `.run` file with the fields above, then raise `KNOWN_SCHEMA`. Files the mod
+  can't read are logged (`Skipping run history file`), and every rescan logs `Run history: N
+  runs, M counted, L lower`.
+- The other `personal_*` scenarios write synthetic runs to `mods/TierListOverlay/test-history/`,
   which the mod reads instead of the profile's history while it exists, and delete it after.
   If a check is interrupted, delete that folder by hand, or the badges keep showing the test
   numbers.

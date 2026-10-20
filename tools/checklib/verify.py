@@ -200,6 +200,18 @@ def check_tip(result, tiers, item, shot_name=None):
         result.note(f"{item['id']}: tip ✓")
 
 
+# The colour of a tip's dim lines (Dim in Tips.cs): additional information, not a fact of its own.
+DIM = "[color=#a0a8aa]"
+
+
+def wrapped_lines(tip):
+    """The lines of a stats tip that wrap on screen. One fact per line, short enough to fit
+    (docs/UI_TEXT.md). Dim lines ("Based on ...", "Other characters: ...") may take two."""
+    dim = [line.startswith(DIM) for line in (tip.get("bbcode") or "").split("\n")]
+    return [text for n, (text, rows) in enumerate(tip.get("lines") or [])
+            if rows > 1 and not (n < len(dim) and dim[n])]
+
+
 def check_badges_on_border(result, view, shot, context_type):
     """A card badge's pointed ends (its vertical middle) must sit on the frame's light inner
     border line: the bright red rows between the description box and the frame."""

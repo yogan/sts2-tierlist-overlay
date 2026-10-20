@@ -104,6 +104,7 @@ internal static class Inspector
             ["title"] = (tip.FindChild("Title", true, false) as Label)?.Text,
             ["text"] = (tip.FindChild("Description", true, false) as RichTextLabel)?.GetParsedText(),
             ["bbcode"] = (tip.FindChild("Description", true, false) as RichTextLabel)?.Text,
+            ["lines"] = Lines(tip.FindChild("Description", true, false) as RichTextLabel),
             // The tier badge in the tip's top right corner.
             ["badge"] = (tip.FindChild(TipBadgeName, true, false) as Control)?.GetMeta("label", "").AsString(),
             ["badge_rect"] = tip.FindChild(TipBadgeName, true, false) is Control tipBadge ? Rect(tipBadge, toWindow) : null,
@@ -134,6 +135,25 @@ internal static class Inspector
             ["setting_tips"] = Tips(SettingTipGroup),
             ["hints"] = hints,
         };
+    }
+
+    /// <summary>
+    /// Each line of a label's text with the number of lines it takes on screen, as
+    /// [text, rows]: more than one row means the line wraps.
+    /// </summary>
+    private static List<object[]>? Lines(RichTextLabel? label)
+    {
+        if (label == null)
+            return null;
+        var lines = new List<object[]>();
+        var start = 0;
+        foreach (var line in label.GetParsedText().Split('\n'))
+        {
+            var rows = line.Length == 0 ? 1 : label.GetCharacterLine(start + line.Length - 1) - label.GetCharacterLine(start) + 1;
+            lines.Add(new object[] { line, rows });
+            start += line.Length + 1;
+        }
+        return lines;
     }
 
     private static readonly System.Reflection.FieldInfo? CardFrameField =
