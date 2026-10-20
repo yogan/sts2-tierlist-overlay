@@ -115,6 +115,8 @@ public static class TierListOverlayMod
     // node.
     private static (bool Keep, BadgeContent? Content) Content(Control node, string? characterId, string? itemId, BadgeMode mode)
     {
+        if (node is NEventOptionButton { Option.Relic: null })
+            return (false, EventContent(itemId, mode));
         if (itemId == null || mode == BadgeMode.None)
             return (false, null);
         var isCard = node is NCard;
@@ -163,6 +165,18 @@ public static class TierListOverlayMod
         if (info == null)
             return (false, badge);
         return (false, badge != null ? badge with { Stats = info } : tips ? Badges.ForTipOnly(itemId, info) : null);
+    }
+
+    // An event option's badge: the player's counts, or only the tip's. Null for options that
+    // get none (Events.Key).
+    private static BadgeContent? EventContent(string? key, BadgeMode mode)
+    {
+        if (key == null || (mode == BadgeMode.None && !Settings.StatsTips) || History.GetEvent(key) is not { } mine)
+            return null;
+        var info = new StatsInfo(StatsKind.Event, null, 0, mine);
+        if (mode != BadgeMode.Personal)
+            return Badges.ForTipOnly(key, info);
+        return mine.Unpicked ? Badges.ForUnpicked(key, info, "") : Badges.ForPersonal(key, info, "");
     }
 
     // Item IDs for the two offers that are no items.
@@ -303,10 +317,28 @@ public static class TierListOverlayMod
             // Elite and event loot: the relic or potion is only an icon on the button.
             NRewardButton { Reward: RelicReward r } => (r.Relic?.Id.Entry, relics, Placement.RightEdge, own),
             NRewardButton { Reward: PotionReward p } => (p.Potion?.Id.Entry, potions, Placement.RightEdge, own),
-            // Ancients (Neow, Darv, …) offer relics as event options.
-            NEventOptionButton option => (option.Option?.Relic?.Id.Entry, relics, Placement.TopCentre, own),
+            // Ancients (Neow, Darv, …) offer relics as event options. Other events' options get counts.
+            NEventOptionButton { Option.Relic: { } relic } => (relic.Id.Entry, relics, Placement.TopCentre, own),
+            NEventOptionButton option => (Events.Key(option), Settings.Events, EventPlacement(option), own),
             _ => (null, BadgeMode.None, Placement.InsideBottom, own),
         };
+    }
+
+    // Event options' badges sit at the box's right end, unless an option's text on screen
+    // reaches that far. Then all of them go on the top edge, as on ancients.
+    private const float TextGap = 12;
+
+    private static Placement EventPlacement(NEventOptionButton button)
+    {
+        foreach (var option in button.GetParent()?.GetChildren().OfType<NEventOptionButton>() ?? Enumerable.Empty<NEventOptionButton>())
+        {
+            if (option.GetNodeOrNull<Control>(Badges.BadgeName) is not { Visible: true } badge
+                || option.GetNodeOrNull<RichTextLabel>("Text") is not { } text)
+                continue;
+            if (text.Position.X + text.GetContentWidth() + TextGap > Badges.RightEdgeLeft(option.Size, badge))
+                return Placement.EventTop;
+        }
+        return Placement.RightEdge;
     }
 
     // Lists can name items the game does not have (renamed, removed, or from a newer game

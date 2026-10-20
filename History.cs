@@ -15,10 +15,12 @@ namespace TierListOverlay;
 /// relics (null where that means nothing: Skip, card removal, potions). `Runs`: the runs counted.
 /// `LowerRuns`: in how many runs below Ascension 7, which the rest leaves out, they took it.
 /// `Item`: false for Skip and card removal, which are choices, not items. `OthersTaken` of
-/// `OthersOffered`: the same with the player's other characters.
+/// `OthersOffered`: the same with the player's other characters. `Visits`: for an event option,
+/// all visits to the event, of which `Offered` reached the option. `Times`: `Taken` of `Offered`
+/// count the times its page was shown, not visits (Events.ShownBy).
 /// </summary>
 internal sealed record PersonalStats(int Taken, int Offered, int? InWins, int Wins, int Runs, int LowerRuns, bool Item,
-    int OthersTaken, int OthersOffered)
+    int OthersTaken, int OthersOffered, int Visits = 0, bool Times = false)
 {
     /// <summary>An item never taken in a counted run, however often (or rarely) offered.</summary>
     public bool Unpicked => Item && Taken == 0;
@@ -36,7 +38,8 @@ internal sealed record PersonalStats(int Taken, int Offered, int? InWins, int Wi
 /// current mode's). Only reads: never writes, moves or renames anything there.
 ///
 /// The folders are listed every few seconds in the background, and only new files are read,
-/// so a finished run counts from the next screen on. A `test-history` folder next to the mod
+/// so a finished run counts from the next screen on. Event options count per visit, with all
+/// characters (see Events). A `test-history` folder next to the mod
 /// DLL takes the place of the profile folders, for tests (tools/check.py).
 /// </summary>
 internal static class History
@@ -56,6 +59,31 @@ internal static class History
     // until the history has been read once.
     private static volatile Dictionary<string, Tally>? _tallies;
 
+    // The visits to each event ("SAPPHIRE_SEED") in the counted runs of all characters, and how
+    // many runs that is. Null until the history has been read once.
+    private sealed record EventTally(int Runs, Dictionary<string, List<Visit>> Visits);
+
+    // A visit to an event: the options picked, and for an event that locks options by the deck
+    // or by gold (Events.Gated), the deck and gold before it, where the history tells.
+    private sealed class Visit(string eventId, List<string> picked, IReadOnlyList<(string, string?)>? deck, int? gold)
+    {
+        public readonly string Event = eventId;
+        public readonly List<string> Picked = picked;
+        // Per option key, whether the visit offered it. Filled on the main thread, which the
+        // game's models need.
+        private readonly Dictionary<string, bool> _offered = new();
+
+        public bool Offered(string key)
+        {
+            if (!_offered.TryGetValue(key, out var offered))
+                // A pick shows it was on offer, whatever the rebuilt deck says.
+                _offered[key] = offered = Picked.Contains(key) || Events.Available(key, deck, gold);
+            return offered;
+        }
+    }
+
+    private static volatile EventTally? _events;
+
     public static void Load(string modDir) => _testDir = Path.Combine(modDir, "test-history");
 
     /// <summary>The player's numbers for an item on a screen, zero for one never offered. Null until the history is read.</summary>
@@ -73,6 +101,23 @@ internal static class History
         int? inWins = group is "cards" or "relics" && tally.Wins > 0 ? tally.InWins.GetValueOrDefault((group, id)) : null;
         return new PersonalStats(count?.Taken ?? 0, count?.Offered ?? 0, inWins, tally.Wins, tally.Runs,
             tally.LowerRuns.GetValueOrDefault(key), item, othersTaken, othersOffered);
+    }
+
+    /// <summary>
+    /// The player's numbers for an event option (its key, see Events): in how many visits that
+    /// reached it they picked it, or on a page that repeats, how often of the times it was shown.
+    /// Null until the history is read.
+    /// </summary>
+    public static PersonalStats? GetEvent(string key)
+    {
+        if (_events is not { } events)
+            return null;
+        var visits = events.Visits.GetValueOrDefault(Events.EventOf(key)) ?? new List<Visit>();
+        if (Events.ShownBy(key) is { } shownBy)
+            return new PersonalStats(visits.Sum(v => v.Picked.Count(c => c == key)), visits.Sum(v => v.Picked.Count(c => c.StartsWith(shownBy))),
+                null, 0, events.Runs, 0, true, 0, 0, visits.Count, Times: true);
+        var reached = visits.Where(v => Events.Reached(v.Picked, key) && v.Offered(key)).ToList();
+        return new PersonalStats(reached.Count(v => v.Picked.Contains(key)), reached.Count, null, 0, events.Runs, 0, true, 0, 0, visits.Count);
     }
 
     public static void OnProcessFrame()
@@ -145,8 +190,12 @@ internal static class History
         var read = Runs.Values.OfType<Run>().ToList();
         var tallies = read.GroupBy(r => r.Character).ToDictionary(g => g.Key, g => new Tally(g.ToList()));
         _tallies = tallies;
-        GD.Print($"[TierListOverlay] Run history: {Runs.Count} runs, {read.Count(r => !r.Lower)} counted, {read.Count(r => r.Lower)} lower "
-                 + $"({string.Join(", ", tallies.Select(t => $"{t.Key} {t.Value.Runs} with {t.Value.Wins} wins"))})");
+        var counted = read.Where(r => !r.Lower).ToList();
+        _events = new EventTally(counted.Count, counted.SelectMany(r => r.Events)
+            .GroupBy(v => v.Event).ToDictionary(g => g.Key, g => g.ToList()));
+        GD.Print($"[TierListOverlay] Run history: {Runs.Count} runs, {counted.Count} counted, {read.Count(r => r.Lower)} lower "
+                 + $"({string.Join(", ", tallies.Select(t => $"{t.Key} {t.Value.Runs} with {t.Value.Wins} wins"))}), "
+                 + $"{_events.Visits.Values.Sum(v => v.Count)} event visits");
     }
 
     // An item's offers: how often it was offered and taken.
@@ -195,8 +244,10 @@ internal static class History
     }
 
     // One run: the character, whether it was below Ascension 7, whether it was won, each offer
-    // (screen kind, group, ID) and whether it was taken, and the cards and relics it ended with.
-    private sealed record Run(string Character, bool Lower, bool Win, List<((StatsKind, string, string), bool)> Offers, HashSet<(string, string)> Final);
+    // (screen kind, group, ID) and whether it was taken, the cards and relics it ended with, and
+    // its visits to events.
+    private sealed record Run(string Character, bool Lower, bool Win, List<((StatsKind, string, string), bool)> Offers, HashSet<(string, string)> Final,
+        List<Visit> Events);
 
     // A run that counts (at any ascension), or null.
     private static Run? Read(string file)
@@ -233,11 +284,20 @@ internal static class History
         var player = players[0];
         var offers = new List<((StatsKind, string, string), bool)>();
         void Offer(StatsKind kind, string group, string id, bool taken) => offers.Add(((kind, group, id), taken));
+        var events = new List<Visit>();
+        var floors = Array(root, "map_point_history").SelectMany(act => act.EnumerateArray()).ToList();
+        List<(string, string?)>[]? decks = null;
+        int? gold = null;
 
-        foreach (var floor in Array(root, "map_point_history").SelectMany(act => act.EnumerateArray()))
+        for (var n = 0; n < floors.Count; n++)
         {
+            var floor = floors[n];
             // Solo runs have the one player's stats.
             var stats = Array(floor, "player_stats").FirstOrDefault();
+            // The gold before this floor is what the one before ended with.
+            var goldBefore = gold;
+            gold = stats.ValueKind == JsonValueKind.Object && stats.TryGetProperty("current_gold", out var g) && g.ValueKind == JsonValueKind.Number
+                ? g.GetInt32() : null;
             if (stats.ValueKind != JsonValueKind.Object)
                 continue;
             var cards = Array(stats, "card_choices").ToList();
@@ -270,11 +330,71 @@ internal static class History
             // Ancients name their relics without the "RELIC." the other entries have.
             foreach (var choice in Array(stats, "ancient_choice"))
                 Offer(StatsKind.Ancient, "relics", Id(Text(choice, "TextKey")), Flag(choice, "was_chosen"));
+            // An event's options picked, in its room (a fight it leads to is a second room).
+            if (Text(floor, "map_point_type") != "ancient"
+                && Array(floor, "rooms").FirstOrDefault(r => Text(r, "room_type") == "event") is { ValueKind: JsonValueKind.Object } room)
+            {
+                var picked = Array(stats, "event_choices")
+                    .Select(c => c.TryGetProperty("title", out var t) ? Events.FromHistory(Text(t, "table"), Text(t, "key")) : null)
+                    .OfType<string>().ToList();
+                var eventId = Id(Text(room, "model_id"));
+                var (byDeck, byGold) = Events.Gated(eventId);
+                if (byDeck)
+                    decks ??= DecksBefore(floors, player);
+                events.Add(new Visit(eventId, picked, byDeck ? decks![n] : null, byGold ? goldBefore : null));
+            }
         }
 
         var final = Array(player, "deck").Select(c => ("cards", Id(Text(c, "id"))))
             .Concat(Array(player, "relics").Select(r => ("relics", Id(Text(r, "id")))))
             .ToHashSet();
-        return new Run(Id(Text(player, "character")), ascension.GetInt32() < MinAscension, Flag(root, "win"), offers, final);
+        return new Run(Id(Text(player, "character")), ascension.GetInt32() < MinAscension, Flag(root, "win"), offers, final, events);
+    }
+
+    // A card as the history names it: its ID and its enchantment's ("CARD.BASH", "ENCHANTMENT.SHARP").
+    private static (string, string?) Card(JsonElement card) =>
+        (Text(card, "id") ?? "", card.TryGetProperty("enchantment", out var e) && e.ValueKind == JsonValueKind.Object ? Text(e, "id") : null);
+
+    // The deck before each floor, rebuilt from the final deck by undoing, floor by floor from
+    // the last, the cards removed, transformed, gained and enchanted. A card's upgrades are
+    // left out: they don't change its type.
+    private static List<(string, string?)>[] DecksBefore(List<JsonElement> floors, JsonElement player)
+    {
+        var deck = Array(player, "deck").Select(Card).ToList();
+        void Remove((string Id, string? Enchantment) card)
+        {
+            var i = deck.IndexOf(card);
+            if (i < 0)
+                i = deck.FindIndex(c => c.Item1 == card.Id);
+            if (i >= 0)
+                deck.RemoveAt(i);
+        }
+        var before = new List<(string, string?)>[floors.Count];
+        for (var n = floors.Count - 1; n >= 0; n--)
+        {
+            var stats = Array(floors[n], "player_stats").FirstOrDefault();
+            if (stats.ValueKind == JsonValueKind.Object)
+            {
+                // Cards back first, so that one gained and lost on the same floor comes out even.
+                foreach (var card in Array(stats, "cards_removed"))
+                    deck.Add(Card(card));
+                foreach (var change in Array(stats, "cards_transformed"))
+                {
+                    deck.Add(Card(change.GetProperty("original_card")));
+                    Remove(Card(change.GetProperty("final_card")));
+                }
+                foreach (var card in Array(stats, "cards_gained"))
+                    Remove(Card(card));
+                foreach (var change in Array(stats, "cards_enchanted"))
+                {
+                    var card = (Text(change.GetProperty("card"), "id") ?? "", Text(change, "enchantment"));
+                    var i = deck.IndexOf(card);
+                    if (i >= 0)
+                        deck[i] = (card.Item1, null);
+                }
+            }
+            before[n] = deck.ToList();
+        }
+        return before;
     }
 }

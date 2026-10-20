@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from .game import (GAME_APP, MCP, MOD_DIR, CheckError, _request, act, hover, hover_until, inspect, log_length, log_since, open_ancient,
-                   open_card_reward, open_shop, read_settings, screenshot, wait_for)
+                   open_card_reward, open_event, open_shop, read_settings, screenshot, wait_for)
 from .geometry import centre, fully_inside, share_covered
 from .global_stats import percent
 from .settings import ensure_stats, set_setting
@@ -151,6 +151,238 @@ def fixture_runs(character, offers, counted=10):
     other = "SILENT" if character != "SILENT" else "IRONCLAD"
     return ([run(j) for j in range(counted)]
             + [run(0, ascension=6), run(0, players=2), run(0, character=other), run(0, mode="custom")])
+
+
+# Events the event scenario visits, and an option each that the synthetic runs never pick. Tea
+# Master's texts reach the right end of the boxes, so its badges go on the top edge.
+EVENTS = ("SAPPHIRE_SEED", "SYMBIOTE", "TEA_MASTER")
+NEVER_PICKED = {"SYMBIOTE": "SYMBIOTE.pages.INITIAL.options.KILL_WITH_FIRE"}
+# Options the event locks, which the synthetic runs lock in every other run, as the game would:
+# Symbiote's Approach without an Attack in the deck to take Corrupted (by the cards that open
+# it), Tea Master's teas below 50 and 150 gold (Ember Tea is on screen only when the test run
+# has 150). The mod counts only the visits that offered them.
+ATTACK, SKILL = "CARD.STRIKE_IRONCLAD", "CARD.DEFEND_IRONCLAD"
+DECK_GATES = {"SYMBIOTE.pages.INITIAL.options.APPROACH": {ATTACK}}
+GOLD_GATES = {"TEA_MASTER.pages.INITIAL.options.BONE_TEA": 50, "TEA_MASTER.pages.INITIAL.options.EMBER_TEA": 150}
+# Abyssal Baths: after Immerse, a page that comes up again with every Linger, whose options
+# count per showing.
+BATHS = "ABYSSAL_BATHS.pages."
+BATHS_PAGE = BATHS + "ALL.options."
+
+
+def baths_visit(j):
+    """The picks of run j's visit to Abyssal Baths: Immerse and linger twice, Immerse and leave,
+    or abstain."""
+    return [[BATHS + "INITIAL.options.IMMERSE", BATHS_PAGE + "LINGER", BATHS_PAGE + "LINGER", BATHS_PAGE + "EXIT_BATHS"],
+            [BATHS + "INITIAL.options.IMMERSE", BATHS_PAGE + "EXIT_BATHS"],
+            [BATHS + "INITIAL.options.ABSTAIN"]][j % 3]
+
+
+def event_fixture_runs(character, options):
+    """Synthetic runs visiting events, `options`: event -> its option keys on the first page.
+    Run j visits each event unless j % 4 == 3, and picks option (j % 3) % len(options) of those
+    on offer, never the NEVER_PICKED one. Even runs lock the DECK_GATES and GOLD_GATES options:
+    30 gold, and the Attack only gained after the events. Odd runs have 200 gold and the Attack
+    until after the events, when it is removed. Every character counts: every other run is
+    another character's. Plus runs that must not count: Ascension 6, two players, a custom
+    game, all picking the first option."""
+    other = "SILENT" if character != "SILENT" else "IRONCLAD"
+
+    def run(j, ascension=10, mode="standard", players=1):
+        locked = j % 2 == 0
+        gold = 30 if locked else 200
+        floors = []
+        for event, keys in options.items():
+            if j % 4 == 3:
+                continue
+            pickable = [k for k in keys if k != NEVER_PICKED.get(event) and not (locked and (k in DECK_GATES or k in GOLD_GATES))] or keys
+            pick = pickable[0] if ascension < 7 or mode != "standard" or players > 1 else pickable[(j % 3) % len(pickable)]
+            floors.append(event_floor(event, [pick], gold))
+        if j % 4 != 3:
+            floors.append(event_floor("ABYSSAL_BATHS", baths_visit(j), gold))
+        # An ancient's choice is no event visit.
+        floors.insert(0, {"map_point_type": "ancient", "rooms": [{"room_type": "event", "model_id": "EVENT.NEOW"}],
+                          "player_stats": [{"current_gold": gold,
+                                            "event_choices": [{"title": {"key": "LEAD_PAPERWEIGHT.title", "table": "relics"}}]}]})
+        change = "cards_gained" if locked else "cards_removed"
+        floors.append({"map_point_type": "monster", "player_stats": [{"current_gold": gold, change: [{"id": ATTACK}]}]})
+        deck = [{"id": SKILL}] + ([{"id": ATTACK}] if locked else [])
+        player = {"character": f"CHARACTER.{character if j % 2 == 0 else other}", "deck": deck, "relics": []}
+        return {"schema_version": 9, "ascension": ascension, "game_mode": mode, "win": False,
+                "players": [player] * players, "map_point_history": [floors]}
+    return [run(j) for j in range(12)] + [run(0, ascension=6), run(0, players=2), run(0, mode="custom")]
+
+
+def event_floor(event, picks, gold):
+    return {"map_point_type": "unknown", "rooms": [{"room_type": "event", "model_id": f"EVENT.{event}"}],
+            "player_stats": [{"current_gold": gold, "event_choices": [{"title": {"key": f"{k}.title", "table": "events"}} for k in picks]}]}
+
+
+def deck_before(floors, n, deck):
+    """The deck (card IDs) before floor n: the final `deck` with the cards removed, transformed
+    and gained from floor n on undone, from the last floor back, as History.cs rebuilds it."""
+    deck = list(deck)
+    for floor in reversed(floors[n:]):
+        stats = (floor.get("player_stats") or [{}])[0]
+        deck += [c["id"] for c in stats.get("cards_removed", [])] + [t["original_card"]["id"] for t in stats.get("cards_transformed", [])]
+        for card in [c["id"] for c in stats.get("cards_gained", [])] + [t["final_card"]["id"] for t in stats.get("cards_transformed", [])]:
+            if card in deck:
+                deck.remove(card)
+    return deck
+
+
+def offered(floors, n, key, deck):
+    """Whether the visit on floor n offered a DECK_GATES or GOLD_GATES option, from the gold the
+    floor before ended with, or the deck before it. True for other options."""
+    if key in GOLD_GATES:
+        return n == 0 or floors[n - 1]["player_stats"][0]["current_gold"] >= GOLD_GATES[key]
+    if key in DECK_GATES:
+        return bool(DECK_GATES[key] & set(deck_before(floors, n, deck)))
+    return True
+
+
+def check_starting_decks(result, runs):
+    """Rewinding each solo run's final deck to before its first floor (deck_before) gives the
+    character's starting deck: at most 15 cards, the same in most of the character's runs. A
+    game update that renames the fields the mod rebuilds decks from (docs/UPDATING.md) leaves
+    the final decks instead."""
+    starts = {}
+    for run in runs:
+        if len(run.get("players", [])) != 1:
+            continue
+        floors = [f for act_floors in run["map_point_history"] for f in act_floors]
+        deck = tuple(sorted(deck_before(floors, 0, [c["id"] for c in run["players"][0]["deck"]])))
+        starts.setdefault(run["players"][0]["character"], []).append(deck)
+    for character, decks in sorted(starts.items()):
+        common = max(set(decks), key=decks.count)
+        share = decks.count(common) / len(decks)
+        if len(common) > 15 or len(decks) >= 5 and share < 0.8:
+            result.fail(f"{character}: the rebuilt starting decks are not the starting deck ({share:.0%} alike, "
+                        f"{len(common)} cards): check the deck fields in docs/UPDATING.md (Personal stats)")
+        else:
+            result.note(f"{character}: {share:.0%} of {len(decks)} runs rewind to the same {len(common)}-card deck ✓")
+
+
+def count_events(runs):
+    """From runs of every character at Ascension 7+, standard, alone: per option key, in how
+    many visits it was picked ("picked") and how often ("times"), the visits per event, per
+    gated option in how many of them it was locked ("locked"), and the runs counted."""
+    counts, times, visits, locked, counted = {}, {}, {}, {}, 0
+    for run in runs:
+        if len(run.get("players", [])) != 1 or run.get("game_mode") != "standard" or run.get("ascension", 0) < 7:
+            continue
+        counted += 1
+        floors = [f for act_floors in run["map_point_history"] for f in act_floors]
+        deck = [c["id"] for c in run["players"][0]["deck"]]
+        for n, floor in enumerate(floors):
+            if floor["map_point_type"] == "ancient":
+                continue
+            for room in floor.get("rooms", []):
+                if room["room_type"] == "event":
+                    event = room["model_id"].split(".", 1)[1]
+                    visits[event] = visits.get(event, 0) + 1
+                    picked = [c["title"]["key"].removesuffix(".title") for c in floor["player_stats"][0].get("event_choices", [])]
+                    for key in (*DECK_GATES, *GOLD_GATES):
+                        if key.startswith(f"{event}.") and key not in picked and not offered(floors, n, key, deck):
+                            locked[key] = locked.get(key, 0) + 1
+                    for key in set(picked):
+                        counts[key] = counts.get(key, 0) + 1
+                    for key in picked:
+                        times[key] = times.get(key, 0) + 1
+    return {"picked": counts, "times": times, "visits": visits, "locked": locked, "runs": counted}
+
+
+def first_page_counts(history, event, key):
+    """An option on an event's first page: picked in how many of the event's visits that offered it."""
+    picked, visits = history["picked"].get(key, 0), history["visits"].get(event, 0) - history["locked"].get(key, 0)
+    return (f"Pick {picked}/{visits}" if picked else "Unpicked",
+            f"Picked in {picked} of {visits} visits" if picked else f"Never picked in {visits} visits")
+
+
+def baths_counts(history, event, key):
+    """An option on Abyssal Baths' repeating page: picked how often of the times it came up."""
+    taken = history["times"].get(key, 0)
+    shown = sum(n for k, n in history["times"].items() if k.startswith(BATHS_PAGE))
+    return f"Pick {taken}/{shown}", f"Picked {taken} of {shown} times"
+
+
+def event_options(view):
+    """The options on screen that can be picked."""
+    return [e for e in view["events"] if not e["locked"] and fully_inside(e["rect"], view["window"])]
+
+
+def check_event_placement(result, view, options, shot):
+    """The options' badges sit all at the box's right end, vertically centred and clear of the
+    option's text, or all on the box's top edge."""
+    placed = []
+    for option in options:
+        badge = next((b for b in view["badges"] if b["visible"] and b["item_id"] == option["id"]), None)
+        if badge:
+            placed.append((option, badge, badge["rect"][1] < option["rect"][1] + 5))
+    on_top = [p for p in placed if p[2]]
+    if on_top and len(on_top) < len(placed):
+        result.fail(f"badges on the box tops and at the right ends on one screen: {[p[0]['id'] for p in on_top]} on top")
+    elif on_top:
+        check_badges_on_box_top(result, view, shot, {o["id"]: o["rect"] for o in options})
+        result.note("badges on the box tops (a text reaches the right end)")
+    for option, badge, top in placed:
+        if top:
+            continue
+        (ox, oy, ow, oh), (bx, by, bw, bh) = option["rect"], badge["rect"]
+        text = option.get("text_rect")
+        if abs(by + bh / 2 - (oy + oh / 2)) > 3:
+            result.fail(f"{option['id']}: badge middle at y={by + bh / 2:.1f}, box middle at y={oy + oh / 2:.1f}")
+        elif bx + bw > ox + ow:
+            result.fail(f"{option['id']}: badge runs past the box's right end")
+        elif text and bx < text[0] + text[2]:
+            result.fail(f"{option['id']}: badge at x={bx:.0f} covers the text, which ends at x={text[0] + text[2]:.0f}")
+        else:
+            result.note(f"{option['id']}: badge at the right end, {bx - text[0] - text[2]:.0f} px clear of the text ✓")
+
+
+def check_event(result, event, history, shot_name, expect=first_page_counts):
+    """Each option of the event on screen shows "Pick n/m" or "Unpicked" from all characters'
+    visits (`expect`: the badge and the tip's line), placed as check_event_placement says, and
+    its tip spells that out."""
+    view = inspect()
+    shot = screenshot(shot_name)
+    result.screenshots.append(shot)
+    options = event_options(view)
+    if len(options) < 2:
+        result.fail(f"{event}: {len(options)} options to pick, expected two or more")
+        return
+    for option in options:
+        key = option["id"]
+        want = expect(history, event, key)[0]
+        mine = [b for b in view["badges"] if b["visible"] and b["item_id"] == key]
+        if not mine:
+            result.fail(f"{key}: no badge (expected {want!r})")
+        elif mine[0]["label"] != want:
+            result.fail(f"{key}: badge reads {mine[0]['label']!r}, expected {want!r}")
+        else:
+            result.note(f"{key}: {want} ✓")
+    check_event_placement(result, view, options, shot)
+    for n, option in enumerate(options):
+        key = option["id"]
+        wanted = ["Your runs, all characters", expect(history, event, key)[1]]
+        tips, view = hovered_stats_tips(option)
+        result.screenshots.append(screenshot(f"{shot_name}_tip{n}"))
+        if not tips:
+            result.fail(f"{key}: no stats tip while hovered")
+            continue
+        text = " ".join((tips[0]["text"] or "").split())
+        missing = [w for w in wanted if w not in text]
+        if missing:
+            result.fail(f"{key}: the tip lacks {missing}: {text[:200]!r}")
+        elif "Locked" in text:
+            result.fail(f"{key}: a note on locking, which the counts leave out: {text[:200]!r}")
+        elif wrapped := wrapped_lines(tips[0]):
+            result.fail(f"{key}: stats tip lines wrap: {wrapped}")
+        elif not fully_inside(tips[0]["rect"], view["window"]):
+            result.fail(f"{key}: stats tip runs off screen at {[round(v) for v in tips[0]['rect']]}")
+        else:
+            result.note(f"{key}: tip {' / '.join(wanted[1:])} ✓")
+    hover(10, 10)
 
 
 def wait_history_read(count, since):
@@ -419,6 +651,56 @@ def scenario_personal_ancient(result, tiers):
         remove_test_history()
 
 
+def scenario_personal_event(result, tiers):
+    """Personal stats: event options show your counts from all characters. An option the event
+    locks without a card to enchant or enough gold counts only the visits that offered it.
+    Badges off: the tip stays."""
+    set_setting("stats_tips", True)
+    if read_settings()["events"] != "personal":
+        set_setting("events", "personal")
+    open_event(EVENTS[0])
+    character = inspect()["character"]
+    # The options of each event, from the screen: open each once.
+    options = {EVENTS[0]: [o["id"] for o in event_options(inspect())]}
+    for event in EVENTS[1:]:
+        open_event(event)
+        options[event] = [o["id"] for o in event_options(inspect())]
+    runs = event_fixture_runs(character, options)
+    try:
+        write_test_history(runs)
+        history = count_events(runs)
+        result.note(f"{history['runs']} runs counted, visits {history['visits']}")
+        check_event(result, EVENTS[2], history, "personal_event_top")
+        open_event(EVENTS[1])
+        if not history["locked"]:
+            result.fail("the synthetic runs lock no option")
+        check_event(result, EVENTS[1], history, "personal_event_locked")
+        open_event(EVENTS[0])
+        check_event(result, EVENTS[0], history, "personal_event")
+        # Abyssal Baths' page after Immerse counts every time it comes up.
+        open_event("ABYSSAL_BATHS")
+        act("choose_event_option", index=0)
+        time.sleep(2.0)
+        check_event(result, "ABYSSAL_BATHS", history, "personal_event_repeat", baths_counts)
+
+        # Badges off: none to see, the stats tip all the same.
+        set_setting("events", "none")
+        open_event(EVENTS[0])
+        view = inspect()
+        if [b for b in view["badges"] if b["visible"] and in_context(b, "NEventOptionButton")]:
+            result.fail("event badges shown with event badges off")
+        tips, _ = hovered_stats_tips(event_options(view)[0])
+        result.screenshots.append(screenshot("personal_event_badges_off"))
+        if tips:
+            result.note("badges off: stats tip still there ✓")
+        else:
+            result.fail("badges off: no stats tip on the event option")
+        hover(10, 10)
+    finally:
+        remove_test_history()
+        set_setting("events", "personal")
+
+
 def history_files(profile):
     """A profile's run history files, unmodded and modded (the mod reads both), as
     (copy name, path). Modded ones get a prefix, as both folders name files by start time."""
@@ -429,7 +711,8 @@ def history_files(profile):
 
 def scenario_personal_real(result, tiers):
     """Personal stats from a copy of the active profile's real run history: the mod reads every
-    file, and a card reward's badges and tips match the counts here. Notices a game update that
+    file, a card reward's badges and tips match the counts here, and the decks rebuilt for event
+    options rewind to the starting decks. Notices a game update that
     changes the .run files, which the synthetic runs of the other personal_* scenarios can't."""
     profile = _request(f"{MCP}/api/v1/profiles")["current_profile_id"]
     files = history_files(profile)
@@ -444,6 +727,7 @@ def scenario_personal_real(result, tiers):
     if not any(run.get("build_id") == game_version for run in runs):
         result.fail(f"no run from game {game_version} in profile {profile}'s history, so nothing in this game "
                     "version's format: tools/check.py --new-run abandons the test run, which makes one")
+    check_starting_decks(result, runs)
     ensure_stats(True, "personal")
     open_card_reward()
     try:
@@ -477,5 +761,6 @@ SCENARIOS = {
     "personal_card_reward": scenario_personal_card_reward,
     "personal_shop": scenario_personal_shop,
     "personal_ancient": scenario_personal_ancient,
+    "personal_event": scenario_personal_event,
     "personal_real": scenario_personal_real,
 }

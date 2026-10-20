@@ -35,6 +35,7 @@ internal static class Inspector
         var cards = new List<object>();
         var relics = new List<object>();
         var potions = new List<object>();
+        var events = new List<object>();
         var hoverTips = new List<object>();
         Walk(root, node =>
         {
@@ -63,6 +64,20 @@ internal static class Inspector
                     break;
                 case NEventOptionButton { Option.Relic: { } relic } option:
                     relics.Add(Describe(option, relic.Id.Entry, toWindow));
+                    break;
+                // Other events' options, by the text key of their title as the run history keeps
+                // it ("SAPPHIRE_SEED.pages.INITIAL.options.EAT"), with whether they are locked.
+                case NEventOptionButton { Option: { } eventOption } option:
+                    var described = Describe(option, eventOption.HistoryName?.LocEntryKey?.Replace(".title", ""), toWindow);
+                    described["locked"] = eventOption.IsLocked;
+                    // Where the option's text ends on its widest line.
+                    if (option.GetNodeOrNull<RichTextLabel>("Text") is { } text)
+                    {
+                        var start = toWindow * text.GetGlobalTransformWithCanvas() * Vector2.Zero;
+                        var end = toWindow * text.GetGlobalTransformWithCanvas() * new Vector2(text.GetContentWidth(), text.Size.Y);
+                        described["text_rect"] = new[] { start.X, start.Y, end.X - start.X, end.Y - start.Y };
+                    }
+                    events.Add(described);
                     break;
                 case NHoverTipSet tips:
                     // The set stays at the origin and positions its tip containers instead. Each
@@ -128,6 +143,7 @@ internal static class Inspector
             ["cards"] = cards,
             ["relics"] = relics,
             ["potions"] = potions,
+            ["events"] = events,
             ["badges"] = badges,
             ["hover_tips"] = hoverTips,
             ["tier_tips"] = Tips(TipGroup),

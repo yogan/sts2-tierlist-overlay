@@ -35,6 +35,8 @@ internal static class Settings
     public const string CardsKey = "cards";
     public const string RelicsKey = "relics";
     public const string PotionsKey = "potions";
+    // The options of events (not ancients, whose relics go with the relics): none or personal.
+    public const string EventsKey = "events";
     // The cards in the deck: deck view, remove, transform, enchant.
     public const string DeckKey = "deck";
     public const string AuthorKey = "author";
@@ -49,6 +51,7 @@ internal static class Settings
         [CardsKey] = Value(BadgeMode.Tiers),
         [RelicsKey] = Value(BadgeMode.Tiers),
         [PotionsKey] = Value(BadgeMode.Tiers),
+        [EventsKey] = Value(BadgeMode.Personal),
         [DeckKey] = Value(BadgeMode.Tiers),
         [AuthorKey] = Baalorlord,
         [CommentaryKey] = true,
@@ -145,6 +148,8 @@ internal static class Settings
     public static BadgeMode Cards => Shown(CardsKey);
     public static BadgeMode Relics => Shown(RelicsKey);
     public static BadgeMode Potions => Shown(PotionsKey);
+    // Events have no tiers and no global stats.
+    public static BadgeMode Events => Chosen(EventsKey) == BadgeMode.Personal ? BadgeMode.Personal : BadgeMode.None;
     // No stats for the cards in the deck.
     public static bool Deck => Chosen(DeckKey) != BadgeMode.None;
     public static string Author => Get(AuthorKey).AsString() == Jorbs ? Jorbs : Baalorlord;

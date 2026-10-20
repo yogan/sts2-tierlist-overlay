@@ -71,6 +71,12 @@ internal static class SettingsUi
 
     private static readonly Option[] BadgeOptions = { None, Tiers, Personal, Global };
 
+    // The history keeps what you picked at an event, not what it offered. Locked options are
+    // judged from the deck and gold before the visit (Events).
+    private static readonly Option EventCounts = new(Settings.Value(BadgeMode.Personal), "Personal stats",
+        Tip: "in how many of your Ascension 7+ visits, with any character, you picked it. "
+             + "Visits where it was locked don't count.");
+
     private static readonly Row[] Rows =
     {
         new Choice(Settings.CardsKey, "Badges on cards", "Badges on cards", () => "On cards you can pick or buy.",
@@ -79,6 +85,9 @@ internal static class SettingsUi
             () => true, BadgeOptions, Tiers.Value),
         new Choice(Settings.PotionsKey, "Badges on potions", "Badges on potions", () => "On potions you can pick or buy.",
             () => true, BadgeOptions, Tiers.Value),
+        new Choice(Settings.EventsKey, "Badges on events", "Badges on events",
+            () => "On event options. Ancients' relics go with the relic badges.",
+            () => true, new[] { None, EventCounts }, EventCounts.Value),
         new Choice(Settings.DeckKey, "Badges on deck screens", "Deck screens",
             () => "The tier list's rating on the cards you have: deck view, remove, transform, enchant.",
             () => true, new[] { None, Tiers }),

@@ -16,6 +16,8 @@ internal enum StatsKind
     Ancient,
     Shop,
     Upgrade,
+    // Event options: the player's own counts only.
+    Event,
 }
 
 /// <summary>

@@ -291,9 +291,11 @@ def check_badge_rim(result, view, shot, context_type):
     result.note(f"rim: {top:.2f} px top, {slanted:.2f} px slanted (median of {len(badges)} badges)")
 
 
-def check_badges_on_box_top(result, view, shot):
+def check_badges_on_box_top(result, view, shot, boxes=None):
     """An ancient option badge's pointed ends (its vertical middle) must sit on the option
-    box's visible top edge: where the dark box starts beside the badge."""
+    box's visible top edge: where the dark box starts beside the badge. `boxes`: the option
+    boxes' rectangles by item ID, where boxes stack so close that the search must stay inside
+    the badge's own box (other events)."""
     image = Image.open(shot).convert("RGB")
     checked = 0
     for badge in view["badges"]:
@@ -302,6 +304,8 @@ def check_badges_on_box_top(result, view, shot):
         bx, by = centre(badge["rect"])
         # Close to the badge only: the ancient's speech bubble can end just above the options.
         rows = range(int(by - badge["rect"][3] * 0.6), int(by + badge["rect"][3] * 0.6))
+        if boxes and badge["item_id"] in boxes:
+            rows = range(max(rows.start, int(boxes[badge["item_id"]][1]) + 3), rows.stop)
         # The box top, where it gets darkest fastest going down, in columns on both sides of
         # the badge. The background shows through the box, so one column can mislead.
         bx0, bw = badge["rect"][0], badge["rect"][2]

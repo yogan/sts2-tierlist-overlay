@@ -176,7 +176,7 @@ def screen_layout(view):
         "taken": time.time(),
         "window": view["window"],
         "items": [{"kind": kind[:-1], "id": i["id"], "type": i["type"], "rect": i["rect"]}
-                  for kind in ("cards", "relics", "potions") for i in shown(view[kind])],
+                  for kind in ("cards", "relics", "potions", "events") for i in shown(view[kind])],
         "badges": [{"id": b["item_id"], "label": b["label"], "rect": b["rect"]} for b in shown(view["badges"])],
         # The game's tip panels, the mod's among them, and which of them are the mod's for an item.
         "tips": [{"rect": t["rect"]} for t in shown(view["hover_tips"])],
@@ -220,13 +220,14 @@ def log_since(line):
 
 # --- The mod's settings -------------------------------------------------------------------
 
-SETTING_DEFAULTS = {"cards": "tiers", "relics": "tiers", "potions": "tiers", "deck": "tiers", "author": "Baalorlord",
+SETTING_DEFAULTS = {"cards": "tiers", "relics": "tiers", "potions": "tiers", "events": "personal", "deck": "tiers", "author": "Baalorlord",
                     "commentary": True, "stats_tips": True, "stats_samples": False}
 # The mod's settings rows: tickboxes, and left/right choices with their options in order.
 TOGGLES = ("commentary", "stats_tips", "stats_samples")
 # Saved value -> label shown, per choice, in the order the arrows page through them.
 BADGES = {"none": "None", "tiers": "Tier list", "personal": "Personal stats", "global": "Global stats"}
-CHOICES = {"cards": BADGES, "relics": BADGES, "potions": BADGES, "deck": {"none": "None", "tiers": "Tier list"},
+CHOICES = {"cards": BADGES, "relics": BADGES, "potions": BADGES, "events": {"none": "None", "personal": "Personal stats"},
+           "deck": {"none": "None", "tiers": "Tier list"},
            "author": {"Baalorlord": "Baalorlord", "Jorbs": "Jorbs"}}
 BADGE_KEYS = ("cards", "relics", "potions")
 
@@ -410,6 +411,13 @@ def open_shop(name):
     time.sleep(1.5)
     view = inspect()
     return view, screenshot(name)
+
+
+def open_event(name):
+    """Jumps to an event (its ID, "SAPPHIRE_SEED") and waits for its options."""
+    console(f"event {name}")
+    wait_state("event")
+    time.sleep(2.0)
 
 
 def open_ancient():

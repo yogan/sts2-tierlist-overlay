@@ -11,9 +11,9 @@ Baalorlord and Jorbs tier lists from Untapped.gg and was inspired by the Untappe
 - **Commentary** from the list's author in an extra hover tip, and a mark on cards that are a
   good upgrade.
 - **Personal stats**, if you like: how often you took an item when it was offered in your own
-  past runs (see below).
+  past runs, and how often you picked each option of an event (see below).
 - **Settings** in a *Tier List* tab of the game's settings: what the badges on cards, relics,
-  potions and deck screens show (none, the tier list, personal stats or global stats),
+  potions, events and deck screens show (none, the tier list, personal stats or global stats),
   Baalorlord's or Jorbs' list, the commentary and stats tips, and the Untapped.gg login. Jorbs
   rates cards only, so relics and potions always use Baalorlord's lists.
 
@@ -34,6 +34,17 @@ Its tip says how often you passed it over, and whether you took it in runs below
 Screens without personal stats (treasure, loot, upgrades, deck screens) show the tier list. The
 mod only reads the history. It never changes it, and it records nothing of its own. A finished
 run counts from the next screen on.
+
+Event options (not ancients, whose relics go with the relic badges) show in how many of your
+visits you picked them ("Pick 5/7"), from your Ascension 7+ runs with all characters, as events
+barely depend on the character. The run history keeps only what you picked, not what was on
+offer, so an option counts every visit that reached its page (on a page that can come up again
+in one visit, like Abyssal Baths', every time it came up). An option an event locks without a
+card to enchant or enough gold (Self-Help Book's, Wongo's) counts only the visits it was open,
+which the mod works out from your deck and gold before the visit. Where an option is offered at
+random (a dish on the conveyor), its tip says so. The badge sits at the right end
+of the option, or on its top edge when an option's text reaches that far. Pages with a single
+option get none. *Badges on events* turns them off.
 
 *Stats in hover tips* (on by default) shows your stats, and other players' when logged in, in
 an extra hover tip whatever the badges show.

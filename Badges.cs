@@ -15,6 +15,9 @@ internal enum Placement
     RightEdge,
     // Centred across the top edge: wide two-line buttons (ancient options).
     TopCentre,
+    // The same on other events' option boxes, whose top edge the texture draws lower. In the
+    // size of their usual right-end badges (RightEdge), which they move from.
+    EventTop,
     // Centred on top of the top edge, clear of the label below: the card reward's Skip.
     AboveTop,
 }
@@ -372,10 +375,16 @@ internal static class Badges
             // The pointed ends on the option box's visible top edge, which the texture draws
             // 8.5% of the box's height below the node's top.
             Placement.TopCentre => new Vector2(centreX, bounds.Position.Y + bounds.Size.Y * 0.085f - size.Y / 2),
+            // On an event option box, 11.7% (measured in screenshots, and check.py's
+            // personal_event scenario checks it).
+            Placement.EventTop => new Vector2(centreX, bounds.Position.Y + bounds.Size.Y * 0.117f - size.Y / 2),
             // Resting on the button's visible top edge, which the texture draws 14% of the
             // button's height below the node's top.
             Placement.AboveTop => new Vector2(centreX, bounds.Position.Y + bounds.Size.Y * 0.14f - size.Y),
-            _ => new Vector2(bounds.End.X - size.X - 16, bounds.GetCenter().Y - size.Y / 2),
+            _ => new Vector2(RightEdgeLeft(bounds.End, badge), bounds.GetCenter().Y - size.Y / 2),
         };
     }
+
+    /// <summary>Where a badge's left edge goes inside the right edge of an item ending at `end`.</summary>
+    public static float RightEdgeLeft(Vector2 end, Control badge) => end.X - badge.GetCombinedMinimumSize().X * badge.Scale.X - 16;
 }

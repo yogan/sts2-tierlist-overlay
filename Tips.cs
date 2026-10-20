@@ -142,12 +142,15 @@ internal static class Tips
             StatsKind.Ancient => ("Ancient Choice Stats", "Picked when offered", "Ancient Choices"),
             StatsKind.Shop => ("Shop Stats", "Bought when offered", "Shops"),
             StatsKind.Upgrade => ("Card Upgrade Stats", "Picked to upgrade", "Smith Events"),
+            StatsKind.Event => ("Event Choice Stats", "", ""),
             _ => ("Card Reward Stats", "Picked when offered", "Card Rewards"),
         };
         // Both are the character's stats: "Your Ironclad runs", "Other players' Ironclad runs".
         var character = characterId == null ? "" : Capital(characterId.ToLowerInvariant()) + " ";
         var lines = new List<string>();
-        if (mine != null)
+        if (mine != null && kind == StatsKind.Event)
+            AddEventLines(lines, itemId, mine);
+        else if (mine != null)
         {
             lines.Add($"[color={Heading}]Your {character}runs[/color]");
             var verb = kind switch
@@ -196,6 +199,31 @@ internal static class Tips
                 lines.Add($"[color={Dim}]Based on {global.TimesOffered.ToString("N0", Numbers)} Act {Math.Min(act, 3)} {offers} at Ascension 7+[/color]");
         }
         AddTip(container, StatsTipGroup, itemId, title, string.Join("\n", lines));
+    }
+
+    // An event option: in how many visits that offered it the player picked it, from all their
+    // characters' runs, how many visits offered it when not all did (a later page, a locked
+    // option), and why it may be missing.
+    private static void AddEventLines(List<string> lines, string key, PersonalStats mine)
+    {
+        lines.Add($"[color={Heading}]Your runs, all characters[/color]");
+        string Visits(int n) => n == 1 ? "visit" : "visits";
+        if (mine.Offered == 0)
+            lines.Add(mine.Visits == 0 ? "No earlier visits" : "No earlier visit offered it");
+        else if (mine.Times)
+            lines.Add(mine.Taken == 0
+                ? $"Never picked in {mine.Offered} {(mine.Offered == 1 ? "offer" : "offers")}"
+                : $"Picked {mine.Taken} of {mine.Offered} times");
+        else if (mine.Taken == 0)
+            lines.Add($"Never picked in {mine.Offered} {Visits(mine.Offered)}");
+        else
+            lines.Add($"Picked in {mine.Taken} of {mine.Offered} {Visits(mine.Offered)}");
+        if (!mine.Times && mine.Offered > 0 && mine.Offered < mine.Visits)
+            lines.Add($"[color={Dim}]{mine.Offered} of your {mine.Visits} visits offered it[/color]");
+        if (Events.Note(key) is { } note)
+            lines.Add($"[color={Dim}]{note}[/color]");
+        if (Settings.StatsSamples)
+            lines.Add($"[color={Dim}]Based on {mine.Runs.ToString("N0", Numbers)} runs at Ascension 7+[/color]");
     }
 
     private static string Capital(string word) => char.ToUpperInvariant(word[0]) + word[1..];

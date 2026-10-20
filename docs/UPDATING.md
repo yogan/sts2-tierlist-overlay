@@ -26,9 +26,9 @@ fails until that constant is raised. The routine:
      slot's `Hitbox`, `res://scenes/ui/hover_tip.tscn` in `Tips.cs`. The settings log "layout
      changed", other features quietly drop out (`settings`, `shop_relics`, `stats_shop`).
    - Constants measured on the game's textures (the card border line at 28.6 of 422 units, the
-     ancient box edge at 8.5% and the Skip button's top edge at 14% in `Badges.cs`, the shop
-     slot scale 0.65): badges land off the border (`deck_view`, `ancient`, `shop_relics`,
-     `stats_card_reward`).
+     ancient box edge at 8.5%, an event box's at 11.7% and the Skip button's top edge at 14% in
+     `Badges.cs`, the shop slot scale 0.65): badges land off the border (`deck_view`,
+     `ancient`, `personal_event`, `shop_relics`, `stats_card_reward`).
 3. When something fails, find out what changed in the game types the failing code uses.
 4. `check.py` drives the game through the STS2MCP mod. If its endpoints fail, update
    it from its `main` branch (releases lag behind the game), build with
@@ -62,6 +62,22 @@ fails until that constant is raised. The routine:
   `cards_gained`, bought relics and potions as picked entries, and `cards_removed`. Plus `win`,
   `ascension`, `game_mode`, `players` and the final `deck` and `relics`. The history does not
   log what the smith offered, so there are no personal upgrade stats.
+- Events: per floor that is not an ancient's, the room with `room_type` `event` (its
+  `model_id`) and `event_choices`, the options picked by their title's text key
+  (`SAPPHIRE_SEED.pages.INITIAL.options.EAT.title`, table `events`). On screen, the option's
+  `HistoryName` is the same key. Which page an option is on comes from its key. `Events.cs`
+  lists the options whose page the keys don't tell (`Requires`), the ones the event locks by
+  the deck or by gold (`DeckGates`, `GoldGates`: every `..._LOCKED` option in the game's event
+  classes that depends on them) and the ones offered at random (`Notes`). After a game update,
+  look for events or options that are new, renamed or differently conditioned and update the
+  lists.
+- Locked options: the history keeps no locked options, so for an event with a gate the mod
+  rebuilds the deck before the visit. It starts from the final `deck` (card `id` and
+  `enchantment.id`) and undoes, from the last floor back, `cards_removed`,
+  `cards_transformed` (`original_card`, `final_card`), `cards_gained` and `cards_enchanted`
+  (`card`, `enchantment`). The gold before the visit is the floor before's `current_gold`.
+  `personal_real` rewinds every real run to its first floor and fails when that doesn't give
+  the starting decks, as a renamed field would.
 - Tested with `schema_version` 9 (game v0.107.1). A new schema version can rename fields.
   `personal_real` notices: it copies the active profile's history (test profile 2) into
   `test-history/`, fails when the mod skips a file, when a file has a newer schema than
