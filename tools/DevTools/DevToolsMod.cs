@@ -19,13 +19,15 @@ namespace DevTools;
 ///   GET  /screenshot?path=/abs/file.png   save the current frame as PNG
 ///   POST /mouse/move?x=..&amp;y=..            move the in-game mouse
 ///   POST /mouse/click?x=..&amp;y=..           left click at that position
-///   GET  /window                          window size in pixels and mode
+///   GET  /window                          window size in pixels, mode and whether muted
 ///   POST /window/mode?mode=windowed       a window beside other apps, for watching while tools
-///                                         drive the game. mode=saved: back to the player's
-///                                         display setting. Neither is saved.
+///                                         drive the game, and muted. mode=saved: back to the
+///                                         player's display setting, with sound. Neither is saved.
 ///   POST /console                         run the request body as a dev console command
 ///   GET  /inspect                         cards, relics, potions, badges and hover tips on screen
 ///   GET  /tree?type=NSettingsScreen&amp;depth=4  node subtree with types, rects and texts
+///   POST /mute?on=true                    mute the game (on=false: back to the player's volume),
+///                                         without changing the saved setting
 ///   POST /key?name=Escape                 press and release a key (Godot Key name)
 ///   POST /call?type=NMerchantRoom&amp;method=OpenInventory   call a method on the first node of a type
 ///
@@ -41,6 +43,9 @@ public static class DevToolsMod
 
     private static DevConsole? _console;
 
+    private static bool _muted;
+    private static ulong _mutedAt;
+
     public static void Initialize()
     {
         var tree = (SceneTree)Engine.GetMainLoop();
@@ -48,6 +53,10 @@ public static class DevToolsMod
         {
             while (MainThreadQueue.TryDequeue(out var action))
                 action();
+            // The game sets its volume again now and then (at start, and on focus with "mute in
+            // background"), so a mute is applied again every second.
+            if (_muted && Time.GetTicksMsec() - _mutedAt > 1000)
+                Mute(true);
         };
 
         var listener = new HttpListener();
@@ -153,8 +162,19 @@ public static class DevToolsMod
             }
             case "/window":
             {
-                var (size, mode) = RunOnMainThread(() => (DisplayServer.WindowGetSize(), DisplayServer.WindowGetMode()));
-                return $"{{\"width\": {size.X}, \"height\": {size.Y}, \"mode\": \"{mode}\"}}";
+                var (size, mode, muted) = RunOnMainThread(() =>
+                    (DisplayServer.WindowGetSize(), DisplayServer.WindowGetMode(), _muted));
+                return $"{{\"width\": {size.X}, \"height\": {size.Y}, \"mode\": \"{mode}\", \"muted\": {(muted ? "true" : "false")}}}";
+            }
+            case "/mute":
+            {
+                var on = q["on"] is "true" or "1";
+                RunOnMainThread(() =>
+                {
+                    Mute(on);
+                    return 0;
+                });
+                return "{\"status\": \"ok\"}";
             }
             case "/window/mode":
             {
@@ -167,6 +187,7 @@ public static class DevToolsMod
                         Watchable();
                     else
                         Saved();
+                    Mute(mode == "windowed");
                     return 0;
                 });
                 return "{\"status\": \"ok\"}";
@@ -193,6 +214,20 @@ public static class DevToolsMod
             default:
                 throw new ArgumentException($"unknown endpoint {path}");
         }
+    }
+
+    // The game plays its sound through its own audio engine, not Godot's buses. Muted: its
+    // master volume at 0. Unmuted: back to the player's volume. The saved setting stays as it is.
+    private static void Mute(bool on)
+    {
+        _muted = on;
+        _mutedAt = Time.GetTicksMsec();
+        var game = MegaCrit.Sts2.Core.Nodes.NGame.Instance;
+        var volume = on ? 0f : MegaCrit.Sts2.Core.Saves.SaveManager.Instance?.SettingsSave?.VolumeMaster;
+        if (game?.AudioManager == null || volume == null)
+            return;
+        game.AudioManager.SetMasterVol(volume.Value);
+        game.DebugAudio?.SetMasterAudioVolume(volume.Value);
     }
 
     // A 16:9 window of 60% of the screen's width (at least 1280 pixels), at the screen's top

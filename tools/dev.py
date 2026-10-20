@@ -14,8 +14,9 @@ window size varies (e.g. 1920x1080 or 3024x1898), so read positions off `tree`, 
   dev.py move X Y | click X Y                      mouse (real input path)
   dev.py key Escape                                press a key (Godot Key name)
   dev.py console 'room Shop'                       dev console command
-  dev.py window windowed|saved                     game in a window beside other apps / back to
-                                                   the player's display setting (none is saved)
+  dev.py window windowed|saved                     game in a window beside other apps and muted /
+                                                   back to the player's display setting and sound
+                                                   (none is saved)
   dev.py shot [--node TYPE[:N]] [--crop X,Y,W,H] [--pad P] [--zoom Z] [--max PX] [NAME]
         screenshot to .artifacts/NAME.png, optionally cropped to a node's rect (Nth match)
         or a window rect, padded, zoomed (nearest) or shrunk to fit --max (default 1600),

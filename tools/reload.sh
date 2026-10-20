@@ -1,8 +1,8 @@
 #!/bin/sh
 # Quit Slay the Spire 2, build and install the mods, start the game again via Steam
 # (so the launch options apply) and wait until the mods' HTTP endpoints answer.
-# The game comes up in a window beside other apps (tools/dev.py window saved restores the
-# player's display setting). --no-build: only restart the game.
+# The game comes up in a window beside other apps, muted (tools/dev.py window saved restores the
+# player's display setting and the sound). --no-build: only restart the game.
 set -eu
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
