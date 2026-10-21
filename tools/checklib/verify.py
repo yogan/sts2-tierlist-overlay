@@ -325,6 +325,10 @@ def check_badges_on_box_top(result, view, shot, boxes=None):
     result.note(f"badges on the option box tops: {checked} checked")
 
 
+# How far a hover tip's drawn panel sits inside the rect reported for it, at most.
+TIP_INSET = 8
+
+
 def check_tooltip_layering(result, view, tiers, shot):
     """A badge overlapping an open hover tip must be covered by it, i.e. not visible in the screenshot."""
     tiers.character = view["character"]
@@ -337,7 +341,10 @@ def check_tooltip_layering(result, view, tiers, shot):
         # The tier tip's own badge, in the same colour, is not the item's badge showing through.
         tip_badges = [t["badge_rect"] for t in view["tier_tips"] if t["visible"] and t.get("badge_rect")]
         for tip in view["hover_tips"]:
-            region = intersection(badge["rect"], tip["rect"])
+            # The panel inside its rect: the rect also takes in the gap to the next tip, where a
+            # badge behind the stack rightly shows through.
+            x, y, w, h = tip["rect"]
+            region = intersection(badge["rect"], [x + TIP_INSET, y + TIP_INSET, w - 2 * TIP_INSET, h - 2 * TIP_INSET])
             if region is None:
                 continue
             checked += 1
