@@ -34,6 +34,11 @@ def setting_row(screen, key):
     return find_node(screen, f"TierListOverlay_{key}")
 
 
+def row_label(row):
+    """A row's label, as shown."""
+    return " ".join((find_node(row, "Label").get("text") or "").split())
+
+
 def is_ticked(row):
     return find_node(row, "Ticked").get("visible", False)
 
@@ -158,6 +163,11 @@ def scenario_settings(result, tiers):
         if not all(f"{o}:" in tip for o in ("Tier list", "Personal stats", "Global stats")):
             result.fail(f"logged in, the cards row's tip does not explain all options: {tip!r}")
         hover(10, 10)
+        # The author's choice picks the event advice too, while there is some.
+        label = row_label(setting_row(screen, "author"))
+        want = "Tier list and event advice" if read_settings()["event_advice"] else "Tier list"
+        if label != want:
+            result.fail(f"logged in, the author row reads {label!r}, expected {want!r}")
         tips_on = read_settings()["stats_tips"]
         if row_enabled(setting_row(screen, "stats_samples")) != tips_on:
             result.fail(f"sample sizes {'greyed out' if tips_on else 'not greyed out'} with stats tips {'on' if tips_on else 'off'}")

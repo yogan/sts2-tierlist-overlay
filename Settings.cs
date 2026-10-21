@@ -45,6 +45,8 @@ internal static class Settings
     public const string StatsTipsKey = "stats_tips";
     // How many offers or runs the stats are based on, in the stats tips.
     public const string StatsSamplesKey = "stats_samples";
+    // Baalorlord's or Jorbs' advice on the event, as a hover tip on its options (with a login).
+    public const string EventAdviceKey = "event_advice";
 
     private static readonly Dictionary<string, Variant> Defaults = new()
     {
@@ -57,6 +59,7 @@ internal static class Settings
         [CommentaryKey] = true,
         [StatsTipsKey] = true,
         [StatsSamplesKey] = false,
+        [EventAdviceKey] = true,
     };
 
     private static readonly ConfigFile Config = new();
@@ -156,6 +159,8 @@ internal static class Settings
     public static bool Commentary => Get(CommentaryKey).AsBool();
     public static bool StatsTips => Get(StatsTipsKey).AsBool();
     public static bool StatsSamples => Get(StatsSamplesKey).AsBool();
+    // The advice comes from Untapped.gg, so it needs the login like global stats.
+    public static bool EventAdvice => Get(EventAdviceKey).AsBool() && Account.Usable;
 
     /// <summary>Whether any badge is set to global stats, shown or not (without a login).</summary>
     public static bool AnyGlobalChosen =>

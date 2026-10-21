@@ -19,6 +19,8 @@ namespace DevTools;
 ///   GET  /screenshot?path=/abs/file.png   save the current frame as PNG
 ///   POST /mouse/move?x=..&amp;y=..            move the in-game mouse
 ///   POST /mouse/click?x=..&amp;y=..           left click at that position
+///   POST /mouse/wheel?x=..&amp;y=..&amp;dir=down|up  one mouse wheel step at that position
+///   POST /mouse/pan?x=..&amp;y=..&amp;dy=..      a trackpad two-finger swipe (pan gesture) there
 ///   GET  /window                          window size in pixels, mode and whether muted
 ///   POST /window/mode?mode=windowed       a window beside other apps, for watching while tools
 ///                                         drive the game, and muted. mode=saved: back to the
@@ -207,6 +209,30 @@ public static class DevToolsMod
                         Input.ParseInputEvent(new InputEventMouseButton
                             { Position = pos, GlobalPosition = pos, ButtonIndex = MouseButton.Left, Pressed = false });
                     }
+                    return 0;
+                });
+                return "{\"status\": \"ok\"}";
+            }
+            case "/mouse/pan":
+            {
+                var pos = new Vector2(ParseFloat(q["x"]), ParseFloat(q["y"]));
+                var delta = new Vector2(0, ParseFloat(q["dy"]));
+                RunOnMainThread(() =>
+                {
+                    Input.ParseInputEvent(new InputEventPanGesture { Position = pos, Delta = delta });
+                    return 0;
+                });
+                return "{\"status\": \"ok\"}";
+            }
+            case "/mouse/wheel":
+            {
+                var pos = new Vector2(ParseFloat(q["x"]), ParseFloat(q["y"]));
+                var button = q["dir"] == "up" ? MouseButton.WheelUp : MouseButton.WheelDown;
+                RunOnMainThread(() =>
+                {
+                    foreach (var pressed in new[] { true, false })
+                        Input.ParseInputEvent(new InputEventMouseButton
+                            { Position = pos, GlobalPosition = pos, ButtonIndex = button, Pressed = pressed, Factor = 1f });
                     return 0;
                 });
                 return "{\"status\": \"ok\"}";

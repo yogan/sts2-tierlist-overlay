@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using Godot;
 
@@ -23,27 +22,17 @@ internal enum Placement
 }
 
 /// <summary>
-/// One part of a badge: the value, optionally with a small label above it ("Pick"), and a
-/// colour its face shades into towards the bottom (the value's tier).
-/// </summary>
-/// `Ink`: the text's own colour instead of the light default.
-internal sealed record Segment(string? Label, string Text, Color? Shade = null, bool Dim = false, Color? Ink = null);
-
-/// <summary>
-/// What a badge shows: a tier ("A-Tier"), global stats ("Pick 29% | Act +5% | Run +1%") or
-/// the player's own ("Pick 3/10").
+/// What a badge shows: a tier ("A-Tier") or a share of offers taken, other players' or the
+/// player's own ("30%", or "2/4" from few offers).
 /// `Tier` is the item's tier list tier, if any. Tools read it.
 /// </summary>
+/// `Ink`: the text's own colour instead of the light default.
 /// `Hidden`: in place but not drawn, so the item's hover tips still find it.
-internal sealed record BadgeContent(string ItemId, string Kind, string Tier, Color Colour, Segment[] Segments, StatsInfo? Stats = null, bool Hidden = false)
-{
-    public string Label => string.Join(" | ", Segments.Select(s => s.Label == null ? s.Text : $"{s.Label} {s.Text}"));
-}
+internal sealed record BadgeContent(string ItemId, string Kind, string Tier, Color Colour, string Label, Color? Ink = null, StatsInfo? Stats = null, bool Hidden = false);
 
 /// <summary>
 /// Badges: a flat hexagon with pointed ends, light text in the game's title font, added as a
-/// child of the item's node. A tier badge is one face in the tier's colour. A stats badge is
-/// split into slanted parts, one per value.
+/// child of the item's node, its face in the tier's colour or, for stats, a dark slate.
 /// </summary>
 internal static class Badges
 {
@@ -62,24 +51,10 @@ internal static class Badges
     /// </summary>
     public static BadgeContent ForTier(string itemId, TierEntry entry, bool upgrading) =>
         new(itemId, TierKind, entry.Tier, new Color(entry.Color),
-            new[] { new Segment(null, TierLabel(entry.Tier) + (upgrading && entry.GoodUpgrade ? " +" : "")) });
+            TierLabel(entry.Tier) + (upgrading && entry.GoodUpgrade ? " +" : ""));
 
-    // The stats badges' own colour, a dark slate. Their winrate parts shade into the tier's
-    // colour.
+    // The stats badges' own colour, a dark slate.
     private static readonly Color StatsColour = new("#3c4b4e");
-    private static readonly Color DimText = new("#8a9699");
-
-    private static readonly Dictionary<string, Color> TierColours = new()
-    {
-        ["S"] = new Color("#408abf"),
-        ["A"] = new Color("#6ba036"),
-        ["B"] = new Color("#92a036"),
-        ["C"] = new Color("#a9792c"),
-        ["D"] = new Color("#a04836"),
-        ["F"] = new Color("#a03636"),
-    };
-
-    public static Color? TierColour(string? tier) => tier != null && TierColours.TryGetValue(tier, out var c) ? c : null;
 
     /// <summary>
     /// "29%" for a share, "+5%" or "-3%" for a change. A share that is neither none nor all
@@ -95,43 +70,29 @@ internal static class Badges
         return (signed && rounded >= 0 ? "+" : "") + rounded + "%";
     }
 
-    /// <summary>
-    /// Pick (or Buy, Upgr.) / Act / Run, as the stats tip spells out. The act's winrate is left
-    /// out in the last act, where it is the run's. `tier` is the item's tier list tier, if any.
-    /// Only for global stats with data (StatEntry.HasData).
-    /// </summary>
-    public static BadgeContent ForStats(string itemId, StatsInfo info, string tier)
-    {
-        var (kind, global, act, _) = info;
-        var stats = global!;
-        var lastAct = act >= 3;
-        var label = kind switch
-        {
-            StatsKind.Shop => "Buy",
-            StatsKind.Upgrade => "Upgr.",
-            _ => "Pick",
-        };
-        var segments = new List<Segment> { new(label, Percent(stats.ActionPct!.Value)) };
-        if (!lastAct)
-            segments.Add(Winrate("Act", stats.ActDelta, stats.ActTier));
-        segments.Add(Winrate("Run", stats.RunDelta, stats.RunTier));
-        return new(itemId, StatsKindName, tier, StatsColour, segments.ToArray(), info);
-    }
+    // Below this many offers a share says little: the player's own badge shows the counts,
+    // other players' none.
+    public const int MinOffersForShare = 5;
 
     /// <summary>
-    /// The player's own numbers as counts: how often they took the item of how often it was
-    /// offered ("Pick 3/10", "Buy 2/6"). Skip too is "Pick": how often it was the pick. Only for
-    /// items with them (StatsInfo.Mine).
+    /// Other players' share of the offers they took (picked, bought or upgraded), "29%", like
+    /// the player's own badge. The tip adds the winrates. `tier` is the item's tier list tier,
+    /// if any. Only for global stats with data (StatEntry.HasData) from MinOffersForShare
+    /// offers on.
+    /// </summary>
+    public static BadgeContent ForStats(string itemId, StatsInfo info, string tier) =>
+        new(itemId, StatsKindName, tier, StatsColour, Percent(info.Global!.ActionPct!.Value), Stats: info);
+
+    /// <summary>
+    /// The player's own numbers, on one line without a label, as the tip spells out: the share
+    /// they took of the times the item was offered ("30%"), or with fewer offers than
+    /// MinOffersForShare, the counts ("2/4"). Only for items with them (StatsInfo.Mine).
     /// </summary>
     public static BadgeContent ForPersonal(string itemId, StatsInfo info, string tier)
     {
         var mine = info.Mine!;
-        var label = info.Kind switch
-        {
-            StatsKind.Shop => "Buy",
-            _ => "Pick",
-        };
-        return new(itemId, StatsKindName, tier, StatsColour, new[] { new Segment(label, $"{mine.Taken}/{mine.Offered}") }, info);
+        var text = mine.Offered < MinOffersForShare ? $"{mine.Taken}/{mine.Offered}" : Percent(100.0 * mine.Taken / mine.Offered);
+        return new(itemId, StatsKindName, tier, StatsColour, text, Stats: info);
     }
 
     /// <summary>
@@ -139,14 +100,11 @@ internal static class Badges
     /// "Unpicked". The tip says whether lower runs took it.
     /// </summary>
     public static BadgeContent ForUnpicked(string itemId, StatsInfo info, string tier) =>
-        new(itemId, StatsKindName, tier, StatsColour, new[] { new Segment(null, "Unpicked", Ink: MegaCrit.Sts2.Core.Helpers.StsColors.gold) }, info);
+        new(itemId, StatsKindName, tier, StatsColour, "Unpicked", MegaCrit.Sts2.Core.Helpers.StsColors.gold, info);
 
     /// <summary>No badge to see, only the stats for the item's hover tip (Skip and card removal, which have no tier).</summary>
     public static BadgeContent ForTipOnly(string itemId, StatsInfo info) =>
-        new(itemId, StatsKindName, "", StatsColour, new[] { new Segment(null, "") }, info, Hidden: true);
-
-    private static Segment Winrate(string label, double? delta, string? tier) =>
-        delta == null ? new Segment(label, "—", Dim: true) : new Segment(label, Percent(delta.Value, signed: true), TierColour(tier));
+        new(itemId, StatsKindName, "", StatsColour, "", Stats: info, Hidden: true);
 
     /// <summary>
     /// Makes the item's badge match `content`: none when null, otherwise one showing it.
@@ -181,7 +139,7 @@ internal static class Badges
         }
     }
 
-    private static string Key(BadgeContent c) => $"{c.ItemId}|{c.Kind}|{c.Tier}|{c.Hidden}|{c.Colour.ToHtml()}|{string.Join("|", c.Segments.Select(s => s.ToString()))}";
+    private static string Key(BadgeContent c) => $"{c.ItemId}|{c.Kind}|{c.Tier}|{c.Hidden}|{c.Colour.ToHtml()}|{c.Label}|{c.Ink?.ToHtml()}";
 
     // The stats a stats badge shows, for its hover tip.
     private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Control, StatsInfo> StatsOf = new();
@@ -225,10 +183,8 @@ internal static class Badges
 
     private static Control Create(BadgeContent content, Font? font, int fontSize)
     {
-        var split = content.Segments.Length > 1 || content.Segments[0].Label != null;
         // Room for the pointed ends (each about half the badge's height deep) plus some air.
-        // A stats badge is taller (label above value), so its ends reach further.
-        var tip = fontSize * (split ? 1.0f : 1.35f);
+        var tip = fontSize * 1.35f;
         var edge = fontSize * 0.12f;
         var style = new StyleBoxEmpty { ContentMarginLeft = tip, ContentMarginRight = tip, ContentMarginTop = edge, ContentMarginBottom = edge };
         var badge = new PanelContainer { Name = BadgeName, MouseFilter = Control.MouseFilterEnum.Ignore };
@@ -238,38 +194,15 @@ internal static class Badges
         badge.SetMeta("kind", content.Kind);
         badge.SetMeta("label", content.Label);
         badge.SetMeta("key", Key(content));
-
-        var row = new HBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-        row.AddThemeConstantOverride("separation", 0);
-        badge.AddChild(row);
-        foreach (var segment in content.Segments)
-        {
-            var part = new MarginContainer { MouseFilter = Control.MouseFilterEnum.Ignore };
-            var padding = split ? Mathf.RoundToInt(fontSize * 0.4f) : 0;
-            part.AddThemeConstantOverride("margin_left", padding);
-            part.AddThemeConstantOverride("margin_right", padding);
-            var column = new VBoxContainer { MouseFilter = Control.MouseFilterEnum.Ignore, Alignment = BoxContainer.AlignmentMode.Center };
-            column.AddThemeConstantOverride("separation", -Mathf.RoundToInt(fontSize * 0.3f));
-            part.AddChild(column);
-            if (segment.Label != null)
-                // Small and without an outline, which at this size fills the letters and blurs
-                // them when the game renders below the screen's resolution (in a window).
-                column.AddChild(Text(segment.Label, font, Mathf.RoundToInt(fontSize * 0.75f), content.Colour, outline: 0));
-            column.AddChild(Text(segment.Text, font, fontSize, segment.Shade ?? content.Colour, segment.Dim ? DimText : segment.Ink));
-            row.AddChild(part);
-        }
+        badge.AddChild(Text(content.Label, font, fontSize, content.Colour, content.Ink));
 
         var rim = Mathf.Max(1.5f, fontSize / 10f);
         // A container draws itself before its children, so the hexagon ends up behind the text.
-        badge.Draw += () => DrawBadge(badge, row, content, rim);
-        // The parts get their places only after the first draw. Draw again once they have.
-        foreach (var part in row.GetChildren().OfType<Control>())
-            part.ItemRectChanged += badge.QueueRedraw;
+        badge.Draw += () => DrawBadge(badge, content.Colour, rim);
         return badge;
     }
 
-    // `outline`: thinner (or none) for small text, which a thick outline smudges.
-    private static Label Text(string text, Font? font, int size, Color colour, Color? textColour = null, int? outline = null)
+    private static Label Text(string text, Font? font, int size, Color colour, Color? textColour)
     {
         var label = new Label { Text = text, MouseFilter = Control.MouseFilterEnum.Ignore, HorizontalAlignment = HorizontalAlignment.Center };
         if (font != null)
@@ -277,48 +210,16 @@ internal static class Badges
         label.AddThemeFontSizeOverride("font_size", size);
         label.AddThemeColorOverride("font_color", textColour ?? new Color(1f, 0.97f, 0.9f));
         label.AddThemeColorOverride("font_outline_color", colour.Darkened(0.75f));
-        label.AddThemeConstantOverride("outline_size", outline ?? Mathf.Max(2, size / 4));
+        label.AddThemeConstantOverride("outline_size", Mathf.Max(2, size / 4));
         return label;
     }
 
     // A dark rim, then the face with a top-to-bottom gradient. Flat, without shine.
-    // Parts of a stats badge shade into their own colour and are divided by slanted lines.
-    private static void DrawBadge(Control badge, Control row, BadgeContent content, float rim)
+    private static void DrawBadge(Control badge, Color colour, float rim)
     {
         var size = badge.Size;
-        var colour = content.Colour;
         badge.DrawColoredPolygon(Hexagon(size, 0), colour.Darkened(0.55f));
-        var face = Hexagon(size, rim);
-        var top = colour.Lightened(0.22f);
-        var bottom = colour.Darkened(0.12f);
-        DrawShaded(badge, face, size.Y, top, bottom);
-
-        var parts = row.GetChildren().OfType<Control>().ToArray();
-        if (parts.Length < 2 && content.Segments.All(s => s.Shade == null))
-            return;
-        // A divider leans like the pointed ends, a quarter of the height across.
-        var slant = size.Y * 0.25f;
-        float Divider(int i) => row.Position.X + parts[i].Position.X;
-        for (var i = 0; i < parts.Length; i++)
-        {
-            if (content.Segments[i].Shade is not { } shade)
-                continue;
-            var left = i == 0 ? -size.X : Divider(i);
-            var right = i == parts.Length - 1 ? 2 * size.X : Divider(i + 1);
-            var slab = new[]
-            {
-                new Vector2(left + slant / 2, 0), new Vector2(right + slant / 2, 0),
-                new Vector2(right - slant / 2, size.Y), new Vector2(left - slant / 2, size.Y),
-            };
-            foreach (var piece in Geometry2D.IntersectPolygons(face, slab))
-                DrawShaded(badge, piece, size.Y, top, shade.Darkened(0.1f));
-        }
-        var line = new Color(0, 0, 0, 0.3f);
-        for (var i = 1; i < parts.Length; i++)
-        {
-            var x = Divider(i);
-            badge.DrawLine(new Vector2(x + slant / 2 * (1 - 2 * rim / size.Y), rim), new Vector2(x - slant / 2 * (1 - 2 * rim / size.Y), size.Y - rim), line, 1.5f, antialiased: true);
-        }
+        DrawShaded(badge, Hexagon(size, rim), size.Y, colour.Lightened(0.22f), colour.Darkened(0.12f));
     }
 
     // Fills the polygon with a gradient from `top` at y = 0 to `bottom` at y = height.

@@ -134,6 +134,16 @@ def hover(x, y):
     _request(f"{DEVTOOLS}/mouse/move?x={x:.0f}&y={y:.0f}", b"")
 
 
+def wheel(x, y, up=False):
+    """One mouse wheel step at a window position."""
+    _request(f"{DEVTOOLS}/mouse/wheel?x={x:.0f}&y={y:.0f}&dir={'up' if up else 'down'}", b"")
+
+
+def pan(x, y, dy):
+    """A trackpad two-finger swipe at a window position, `dy` down (negative: up)."""
+    _request(f"{DEVTOOLS}/mouse/pan?x={x:.0f}&y={y:.0f}&dy={dy}", b"")
+
+
 def hover_until(point, done, timeout=3.0):
     """Hovers `point` and returns the view once `done(view)` holds, or the last view after
     `timeout`. Leaves first, so the move enters anew. A synthetic mouse move now and then does
@@ -181,7 +191,7 @@ def screen_layout(view):
         # The game's tip panels, the mod's among them, and which of them are the mod's for an item.
         "tips": [{"rect": t["rect"]} for t in shown(view["hover_tips"])],
         "item_tips": [{"kind": kind.split("_")[0], "id": t["item_id"], "rect": t["rect"]}
-                      for kind in ("tier_tips", "stats_tips", "setting_tips") for t in shown(view[kind])],
+                      for kind in ("tier_tips", "stats_tips", "setting_tips", "advice_tips") for t in shown(view[kind])],
     }
 
 
@@ -221,9 +231,9 @@ def log_since(line):
 # --- The mod's settings -------------------------------------------------------------------
 
 SETTING_DEFAULTS = {"cards": "tiers", "relics": "tiers", "potions": "tiers", "events": "personal", "deck": "tiers", "author": "Baalorlord",
-                    "commentary": True, "stats_tips": True, "stats_samples": False}
+                    "commentary": True, "stats_tips": True, "stats_samples": False, "event_advice": True}
 # The mod's settings rows: tickboxes, and left/right choices with their options in order.
-TOGGLES = ("commentary", "stats_tips", "stats_samples")
+TOGGLES = ("commentary", "stats_tips", "event_advice", "stats_samples")
 # Saved value -> label shown, per choice, in the order the arrows page through them.
 BADGES = {"none": "None", "tiers": "Tier list", "personal": "Personal stats", "global": "Global stats"}
 CHOICES = {"cards": BADGES, "relics": BADGES, "potions": BADGES, "events": {"none": "None", "personal": "Personal stats"},
@@ -420,9 +430,9 @@ def open_event(name):
     time.sleep(2.0)
 
 
-def open_ancient():
-    """Jumps to the ancient Darv's event, offering relics as options."""
-    console("ancient DARV")
+def open_ancient(ancient="DARV"):
+    """Jumps to an ancient's event (Darv's by default), offering relics as options."""
+    console(f"ancient {ancient}")
     # A resumed run can show its saved loot screen or the map on top of the event.
     for _ in range(3):
         s = wait_state("event", "map", "rewards", "card_reward")

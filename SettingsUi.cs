@@ -51,7 +51,9 @@ internal static class SettingsUi
         public bool Offered => Available?.Invoke() ?? true;
     }
 
-    private sealed record Choice(string Key, string Label, string TipTitle, Func<string> Tip, Func<bool> Applies, Option[] Options, string Fallback = "", bool Group = false)
+    // `LabelNow`: the label as things are, where it names what the row affects only sometimes.
+    private sealed record Choice(string Key, string Label, string TipTitle, Func<string> Tip, Func<bool> Applies, Option[] Options, string Fallback = "", bool Group = false,
+        Func<string>? LabelNow = null)
         : Row(Key, Label, TipTitle, Tip, Applies, Group)
     {
         public override string TipText =>
@@ -67,7 +69,7 @@ internal static class SettingsUi
     private static readonly Option Personal = new(Settings.Value(BadgeMode.Personal), "Personal stats",
         Tip: "how often you took it in your own Ascension 7+ runs with this character.");
     private static readonly Option Global = new(Settings.Value(BadgeMode.Global), "Global stats", () => Account.Usable,
-        "how often other players took it at Ascension 7+ with this character, and their win rates.");
+        "how often other players took it at Ascension 7+ with this character.");
 
     private static readonly Option[] BadgeOptions = { None, Tiers, Personal, Global };
 
@@ -93,22 +95,28 @@ internal static class SettingsUi
             () => true, new[] { None, Tiers }),
 
         new Choice(Settings.AuthorKey, "Tier list", "Tier list",
-            () => "Whose ratings the badges and tips show. Jorbs rates cards only, so relics and potions keep Baalorlord's.",
-            () => Settings.AnyTiers, new[] { new Option(Settings.Baalorlord, Settings.Baalorlord), new Option(Settings.Jorbs, Settings.Jorbs) },
-            Group: true),
+            () => $"Whose ratings the badges and tips show{(Settings.EventAdvice ? ", and whose event advice comes first" : "")}. "
+                  + "Jorbs rates cards only, so relics and potions keep Baalorlord's.",
+            () => Settings.AnyTiers || Settings.EventAdvice, new[] { new Option(Settings.Baalorlord, Settings.Baalorlord), new Option(Settings.Jorbs, Settings.Jorbs) },
+            Group: true, LabelNow: () => Settings.EventAdvice ? "Tier list and event advice" : "Tier list"),
         new Toggle(Settings.CommentaryKey, "Tier list commentary in hover tips", "Commentary",
             () => "An extra hover tip on rated items with the author's tier and commentary.", () => true),
         new Toggle(Settings.StatsTipsKey, "Stats in hover tips", "Stats tips",
             () => $"An extra hover tip with your own stats{(Account.Usable ? " and other players'" : "")}, whatever the badges show.",
             () => true),
+        new Toggle(Settings.EventAdviceKey, "Event advice in hover tips", "Event advice",
+            () => Account.Usable
+                ? "An extra hover tip on event options with the tier list author's advice on the event, or the other author's where there is none."
+                : "Log in to Untapped.gg for Baalorlord's and Jorbs' advice on events.",
+            () => Account.Usable),
 
         new Toggle(Settings.StatsSamplesKey, "Sample sizes in stats tips", "Sample sizes",
             () => "Below the stats, how many runs and offers they are based on.", () => Settings.StatsTips, Group: true),
 
         new AccountRow(AccountKey, "Untapped.gg", "Untapped.gg",
             () => (Account.Usable
-                ? "Badges and tips can show other players' pick and win rates."
-                : "Log in for other players' pick and win rates on badges and in tips.")
+                ? "Badges can show other players' pick rates, and tips their win rates and event advice."
+                : "Log in for other players' pick and win rates, and for event advice.")
                 + " The mod only reads these stats and sends none of your runs.", Group: true),
     };
 
@@ -367,7 +375,12 @@ internal static class SettingsUi
         if (shown.Row is Choice choice)
             UpdateChoice(shown, choice);
 
-        var text = shown.Row is AccountRow ? $"{shown.Row.Label}   [color={StatusColour}]{AccountStatus()}[/color]" : shown.Row.Label;
+        var text = shown.Row switch
+        {
+            AccountRow => $"{shown.Row.Label}   [color={StatusColour}]{AccountStatus()}[/color]",
+            Choice { LabelNow: { } now } => now(),
+            _ => shown.Row.Label,
+        };
         if (text != shown.Text)
             shown.Label.Text = shown.Text = text;
         if (shown.Button != null && AccountAction() is var (action, colour) && action != shown.ButtonText)

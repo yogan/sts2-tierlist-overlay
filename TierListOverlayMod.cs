@@ -56,6 +56,7 @@ public static class TierListOverlayMod
         if (gameVersion != null && gameVersion != TestedGameVersion)
             GD.PrintErr($"[TierListOverlay] Last tested on game {TestedGameVersion}, this is {gameVersion}: run the update routine in docs/UPDATING.md");
         TierLists.LoadInBackground(Path.Combine(modDir, "cache"), gameVersion);
+        Advice.Load(Path.Combine(modDir, "cache"));
 
         var tree = (SceneTree)Engine.GetMainLoop();
         tree.NodeAdded += OnNodeAdded;
@@ -78,6 +79,7 @@ public static class TierListOverlayMod
         Hint.OnProcessFrame();
         Account.OnProcessFrame();
         History.OnProcessFrame();
+        Advice.OnProcessFrame();
         // The game's model database may not be ready in the first frames. If so, try again.
         if (TierLists.Generation != _checkedGeneration && LogUnknownIds())
             _checkedGeneration = TierLists.Generation;
@@ -152,13 +154,14 @@ public static class TierListOverlayMod
         var info = mine != null || global != null ? new StatsInfo(kind, global, act, mine) : null;
         var badge = mode switch
         {
-            BadgeMode.Global when global != null => Badges.ForStats(itemId, info!, tier?.Entry.Tier ?? ""),
+            BadgeMode.Global when global?.TimesOffered >= Badges.MinOffersForShare => Badges.ForStats(itemId, info!, tier?.Entry.Tier ?? ""),
             BadgeMode.Personal when mine != null => mine.Unpicked
                 ? Badges.ForUnpicked(itemId, info!, tier?.Entry.Tier ?? "")
                 : Badges.ForPersonal(itemId, info!, tier?.Entry.Tier ?? ""),
-            // Global stats, but too little data for this item: no badge rather than a tier beside
-            // the others' stats. A hidden tier badge still brings up the item's tips. Without any
-            // stats (no answer yet, offline, history not read) the whole screen shows tiers.
+            // Global stats, but too little data for this item (or too few offers for a share): no
+            // badge rather than a tier beside the others' stats. A hidden tier badge still brings
+            // up the item's tips. Without any stats (no answer yet, offline, history not read) the
+            // whole screen shows tiers.
             BadgeMode.Global when answered => tierBadge == null ? null : tierBadge with { Hidden = true },
             _ => tierBadge,
         };

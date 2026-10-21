@@ -14,7 +14,7 @@ from .game import (BADGE_KEYS, GAME_LOG, MOD_DIR, CheckError, act, click, consol
                    hover, hover_until, inspect, leave_screens, log_since, log_length, open_ancient, open_card_reward,
                    open_shop, read_settings, restart_game, screenshot, tree, wait_for, wait_state)
 from .geometry import centre, fully_inside, share_covered
-from .settings import (account_row, close_settings, ensure_stats, open_settings, row_enabled, set_setting, setting_row,
+from .settings import (account_row, close_settings, ensure_stats, open_settings, row_enabled, row_label, set_setting, setting_row,
                        setting_tip, shown_value)
 from .tiers import scenario_deck_view
 from .verify import (ICON_TYPES, check_badges, check_badges_on_box_top, check_prices_clear, check_tooltip_layering,
@@ -24,14 +24,16 @@ API = "https://api.sts2.untapped.gg"
 ACCOUNT = MOD_DIR / "account.cfg"
 USER_AGENT = "TierListOverlay check.py"
 
-# Per screen kind: (badge label of the action, tip title, tip wording of the action).
+# Per screen kind: (tip title, tip wording of the action).
 STATS_KINDS = {
-    "card-reward-stats": ("Pick", "Card Reward Stats", "Picked when offered"),
-    "skip": ("Pick", "Skip Stats", "Picked instead of a card"),
-    "ancient-choice-stats": ("Pick", "Ancient Choice Stats", "Picked when offered"),
-    "shop-stats": ("Buy", "Shop Stats", "Bought when offered"),
-    "card-upgrade-stats": ("Upgr.", "Card Upgrade Stats", "Picked to upgrade"),
+    "card-reward-stats": ("Card Reward Stats", "Picked when offered"),
+    "skip": ("Skip Stats", "Picked instead of a card"),
+    "ancient-choice-stats": ("Ancient Choice Stats", "Picked when offered"),
+    "shop-stats": ("Shop Stats", "Bought when offered"),
+    "card-upgrade-stats": ("Card Upgrade Stats", "Picked to upgrade"),
 }
+# Below this many offers a share says little, and the badge is left out (Badges.MinOffersForShare).
+MIN_OFFERS_FOR_SHARE = 5
 
 
 def read_cfg(path):
@@ -108,18 +110,15 @@ def has_data(entry):
     return (entry.get("times_offered") or 0) > 0 and action(entry) is not None
 
 
-def expected_label(kind, entry, act):
-    """What the item's stats badge reads, or None for no badge (too few runs for stats)."""
-    if not has_data(entry):
+def expected_label(entry):
+    """What the item's stats badge reads, the share alone like the player's own ("29%"), or
+    None for no badge (too few runs for stats, or too few offers for a share)."""
+    if not has_data(entry) or entry["times_offered"] < MIN_OFFERS_FOR_SHARE:
         return None
-    parts = [f"{STATS_KINDS[kind][0]} {percent(action(entry))}"]
-    for label, field, show in (("Act", "win_ca_pct_delta", act < 3), ("Run", "win_pct_delta", True)):
-        if show:
-            parts.append(f"{label} —" if entry.get(field) is None else f"{label} {percent(entry[field], True)}")
-    return " | ".join(parts)
+    return percent(action(entry))
 
 
-def check_stats_badges(result, view, endpoint, groups, act, context_type, items):
+def check_stats_badges(result, view, endpoint, groups, context_type, items):
     """Each item (id, answer group, kind) in `context_type` must show a stats badge reading
     what the API answers for it."""
     badges = [b for b in view["badges"] if b["visible"] and in_context(b, context_type)]
@@ -128,16 +127,16 @@ def check_stats_badges(result, view, endpoint, groups, act, context_type, items)
         mine = [b for b in badges if b["item_id"] == item_id]
         if entry is None:
             result.fail(f"{item_id}: the API answered nothing for it")
-        elif not has_data(entry):
+        elif (want := expected_label(entry)) is None:
             if any(b["kind"] == "stats" for b in mine):
-                result.fail(f"{item_id}: too few runs for stats, but shows {mine[0]['label']!r}")
+                result.fail(f"{item_id}: too little data for a share, but shows {mine[0]['label']!r}")
             else:
-                result.note(f"{item_id}: too few runs for stats, no stats badge ✓")
+                result.note(f"{item_id}: too little data for a share, no stats badge ✓")
         elif not mine:
-            result.fail(f"{item_id}: no badge (expected stats {expected_label(kind, entry, act)!r})")
+            result.fail(f"{item_id}: no badge (expected stats {want!r})")
         elif mine[0]["kind"] != "stats":
             result.fail(f"{item_id}: {mine[0]['kind']} badge {mine[0]['label']!r}, expected stats")
-        elif mine[0]["label"] != (want := expected_label(kind, entry, act)):
+        elif mine[0]["label"] != want:
             result.fail(f"{item_id}: badge reads {mine[0]['label']!r}, expected {want!r}")
         else:
             result.note(f"{item_id}: {want} ✓")
@@ -161,7 +160,7 @@ def check_stats_tip(result, item, entry, kind, act, shot_name):
     if len(tips) != 1:
         result.fail(f"{item['id']}: {len(tips)} stats tips while hovered (expected 1)")
         return
-    tip, (_, title, wording) = tips[0], STATS_KINDS[kind]
+    tip, (title, wording) = tips[0], STATS_KINDS[kind]
     text = " ".join((tip["text"] or "").split())
     if tip["title"] != title:
         result.fail(f"{item['id']}: stats tip titled {tip['title']!r}, expected {title!r}")
@@ -209,7 +208,7 @@ def stats_answer(result, endpoint, since):
 
 
 def scenario_stats_card_reward(result, tiers):
-    """Stats on: card reward badges and Skip show the API's pick and win rates, with tips."""
+    """Stats on: card reward badges and Skip show the API's pick shares, with tips."""
     ensure_stats(True)
     since = log_length()
     open_card_reward()
@@ -219,7 +218,7 @@ def scenario_stats_card_reward(result, tiers):
     cards = [c for c in view["cards"] if c["on_screen"] and in_context(c, "NCardRewardSelectionScreen")]
     if {c["id"] for c in cards} != {c["id"] for c in request["offered_cards"]}:
         result.fail(f"request offers {[c['id'] for c in request['offered_cards']]}, the screen {[c['id'] for c in cards]}")
-    check_stats_badges(result, view, "card-reward-stats", groups, request["act"], "NCardRewardSelectionScreen",
+    check_stats_badges(result, view, "card-reward-stats", groups, "NCardRewardSelectionScreen",
                        [(c["id"], "cards", "card-reward-stats") for c in cards] + [("SKIP", "skip", "skip")])
     for n, card in enumerate(cards):
         entry = groups.get("cards", {}).get(card["id"])
@@ -238,7 +237,7 @@ def scenario_stats_card_reward(result, tiers):
 
 
 def scenario_stats_shop(result, tiers):
-    """Stats on: shop cards, relics, potions and card removal show buy and win rates."""
+    """Stats on: shop cards, relics, potions and card removal show the share bought."""
     ensure_stats(True)
     since = log_length()
     view, shot = open_shop("stats_shop")
@@ -252,7 +251,7 @@ def scenario_stats_shop(result, tiers):
              + [(p["id"], "potions", "shop-stats") for p in shown("potions")])
     if request.get("remove_price"):
         items.append(("CARD_REMOVAL", "remove", "shop-stats"))
-    check_stats_badges(result, view, "shop-stats", groups, request["act"], "NMerchantInventory", items)
+    check_stats_badges(result, view, "shop-stats", groups, "NMerchantInventory", items)
     check_prices_clear(result)
     for group, shot_name in (("cards", "stats_shop_tip"), ("relics", "stats_shop_relic_tip"), ("potions", "stats_shop_potion_tip")):
         first = shown(group)[:1]
@@ -289,10 +288,11 @@ def scenario_stats_shop(result, tiers):
 
 
 def scenario_stats_ancient(result, tiers):
-    """Stats on: ancient options show pick and win rates."""
+    """Stats on: ancient options show the share of players who picked them."""
     ensure_stats(True)
     since = log_length()
-    open_ancient()
+    # Neow's: the test run's Darv offers relics of later acts, without act 1 stats.
+    open_ancient("NEOW")
     request, groups = stats_answer(result, "ancient-choice-stats", since)
     time.sleep(2)
     hover(10, 10)
@@ -303,7 +303,7 @@ def scenario_stats_ancient(result, tiers):
     options = [r for r in view["relics"] if r["type"] == "NEventOptionButton" and fully_inside(r["rect"], view["window"])]
     if sorted(o["id"] for o in options) != sorted(request["ancient_choices"]):
         result.fail(f"request offers {request['ancient_choices']}, the screen {[o['id'] for o in options]}")
-    check_stats_badges(result, view, "ancient-choice-stats", groups, request["act"], "NEventRoom",
+    check_stats_badges(result, view, "ancient-choice-stats", groups, "NEventRoom",
                        [(o["id"], "relics", "ancient-choice-stats") for o in options])
     check_badges_on_box_top(result, view, shot)
     for i, option in enumerate(options):
@@ -314,7 +314,7 @@ def scenario_stats_ancient(result, tiers):
 
 
 def scenario_stats_upgrade(result, tiers):
-    """Stats on: the rest site's upgrade grid shows upgrade and win rates."""
+    """Stats on: the rest site's upgrade grid shows the share upgraded."""
     ensure_stats(True)
     since = log_length()
     console("room RestSite")
@@ -327,7 +327,7 @@ def scenario_stats_upgrade(result, tiers):
     view = inspect()
     result.screenshots.append(screenshot("stats_upgrade"))
     cards = [c for c in view["cards"] if in_context(c, "NDeckUpgradeSelectScreen") and fully_inside(c["rect"], view["window"])]
-    check_stats_badges(result, view, "card-upgrade-stats", groups, request["act"], "NDeckUpgradeSelectScreen",
+    check_stats_badges(result, view, "card-upgrade-stats", groups, "NDeckUpgradeSelectScreen",
                        sorted({(c["id"], "cards", "card-upgrade-stats") for c in cards}))
     if cards and groups.get("cards", {}).get(cards[0]["id"]):
         check_stats_tip(result, cards[0], groups["cards"][cards[0]["id"]], "card-upgrade-stats", request["act"], "stats_upgrade_tip")
@@ -347,8 +347,8 @@ def scenario_stats_deck_view(result, tiers):
 
 def scenario_logged_out(result, tiers):
     """Global stats chosen, then Log out in the settings: the login file goes, the choice stays
-    saved but shows as the tier list and can't be picked, badges show tiers, and a game start
-    without a login shows a hint. Restarts the game twice. The login comes back from a copy."""
+    saved but shows as the tier list and can't be picked, badges show tiers, event options no
+    advice, and a game start without a login shows a hint. Restarts the game twice. The login comes back from a copy."""
     if not ACCOUNT.exists():
         raise CheckError(f"needs a login in {ACCOUNT}: log in through the mod's settings first")
     ensure_stats(True)
@@ -370,6 +370,12 @@ def scenario_logged_out(result, tiers):
                             f"(saved {read_settings()[key]!r}), expected 'Tier list', 'global' kept")
         if not row_enabled(setting_row(screen, "stats_samples")):
             result.fail("sample sizes are greyed out without a login (they apply to your own stats too)")
+        if row_enabled(setting_row(screen, "event_advice")):
+            result.fail("event advice is not greyed out without a login")
+        elif read_settings()["event_advice"] is not True:
+            result.fail("logging out changed the saved event advice setting")
+        if row_label(setting_row(screen, "author")) != "Tier list":
+            result.fail(f"logged out, the author row reads {row_label(setting_row(screen, 'author'))!r}, expected 'Tier list'")
         tip = setting_tip("cards") or ""
         if "Global stats" in tip or "Personal stats:" not in tip:
             result.fail(f"logged out, the cards row's tip should explain all but global stats: {tip!r}")
@@ -394,6 +400,9 @@ def scenario_logged_out(result, tiers):
             result.fail("stats badges without a login")
         check_badges(result, view, tiers, "cards", "NMerchantInventory")
         check_badges(result, view, tiers, "relics", "NMerchantInventory", types=ICON_TYPES)
+        # Imported here: the advice checks build on the personal ones, which import this module.
+        from .advice import BOTH, check_no_advice
+        check_no_advice(result, BOTH, "without a login", "logged_out_event")
 
         restart_game()
         hints = wait_for(lambda: inspect()["hints"], "the game start hint", timeout=30)

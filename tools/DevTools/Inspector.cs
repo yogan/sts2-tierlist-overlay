@@ -23,6 +23,7 @@ internal static class Inspector
     private const string TipGroup = "tierlist_tip";
     private const string StatsTipGroup = "tierlist_stats_tip";
     private const string SettingTipGroup = "tierlist_setting_tip";
+    private const string AdviceTipGroup = "tierlist_advice_tip";
     private const string HintGroup = "tierlist_hint";
     private const string TipBadgeName = "TierListOverlayTipBadge";
 
@@ -123,6 +124,10 @@ internal static class Inspector
             // The tier badge in the tip's top right corner.
             ["badge"] = (tip.FindChild(TipBadgeName, true, false) as Control)?.GetMeta("label", "").AsString(),
             ["badge_rect"] = tip.FindChild(TipBadgeName, true, false) is Control tipBadge ? Rect(tipBadge, toWindow) : null,
+            // A text that scrolls: how far it is scrolled and how far it can be, in its pixels.
+            ["scroll"] = tip.FindChild("Description", true, false) is RichTextLabel { ScrollActive: true } scrolling
+                ? new[] { scrolling.GetVScrollBar().Value, System.Math.Max(0, scrolling.GetVScrollBar().MaxValue - scrolling.GetVScrollBar().Page) }
+                : null,
         }).ToList();
         var hints = tree.GetNodesInGroup(HintGroup).OfType<Label>().Where(l => l.IsVisibleInTree()).Select(l => l.Text).ToList();
 
@@ -149,6 +154,7 @@ internal static class Inspector
             ["tier_tips"] = Tips(TipGroup),
             ["stats_tips"] = Tips(StatsTipGroup),
             ["setting_tips"] = Tips(SettingTipGroup),
+            ["advice_tips"] = Tips(AdviceTipGroup),
             ["hints"] = hints,
         };
     }

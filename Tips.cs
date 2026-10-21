@@ -8,14 +8,15 @@ using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.HoverTips;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Cards;
+using MegaCrit.Sts2.Core.Nodes.Events;
 using MegaCrit.Sts2.Core.Nodes.HoverTips;
 
 namespace TierListOverlay;
 
 /// <summary>
-/// Adds the author's tier and commentary, and the item's stats (the player's own and
-/// Untapped.gg's), as more hover tips in the game's own tip style whenever the game shows hover
-/// tips for the item.
+/// Adds the author's tier and commentary, the item's stats (the player's own and
+/// Untapped.gg's), and on events the authors' advice, as more hover tips in the game's own tip
+/// style whenever the game shows hover tips for the item.
 /// </summary>
 internal static class Tips
 {
@@ -23,6 +24,7 @@ internal static class Tips
     private const string TipGroup = "tierlist_tip";
     private const string StatsTipGroup = "tierlist_stats_tip";
     private const string SettingTipGroup = "tierlist_setting_tip";
+    private const string AdviceTipGroup = "tierlist_advice_tip";
     private const string FocusMeta = "tierlist_focus_tip";
     private const string DoneMeta = "tierlist_tip_done";
 
@@ -56,21 +58,30 @@ internal static class Tips
             set.SetMeta(DoneMeta, true);
             if (OwnerField?.GetValue(set) is not Control owner || ContainerField?.GetValue(set) is not Container container)
                 continue;
-            // The owner is the hovered item or its holder. Its badge says what it shows.
-            if (owner.FindChild(Badges.BadgeName, recursive: true, owned: false) is not Control badge)
-                continue;
-            var itemId = badge.GetMeta("item_id", "").AsString();
-            var isCard = badge.GetParent() is NCard;
-            var stats = Badges.StatsFor(badge);
             var added = false;
-            if (stats != null && Settings.StatsTips)
+            // The owner is the hovered item or its holder. Its badge says what it shows.
+            if (owner.FindChild(Badges.BadgeName, recursive: true, owned: false) is Control badge)
             {
-                AddStatsTip(container, itemId, stats, characterId);
-                added = true;
+                var itemId = badge.GetMeta("item_id", "").AsString();
+                var isCard = badge.GetParent() is NCard;
+                var stats = Badges.StatsFor(badge);
+                if (stats != null && Settings.StatsTips)
+                {
+                    AddStatsTip(container, itemId, stats, characterId);
+                    added = true;
+                }
+                if (Settings.Commentary && TierLists.TryGet(characterId, itemId, out var entry, isCard))
+                {
+                    AddTip(container, itemId, entry);
+                    added = true;
+                }
             }
-            if (Settings.Commentary && TierLists.TryGet(characterId, itemId, out var entry, isCard))
+            // Advice is on the event, so every option of it shows the same. Not on ancients'
+            // relics, which have none.
+            if (owner is NEventOptionButton { Option.Relic: null, Event: { } ev } option && Settings.EventAdvice
+                && Advice.For(ev.Id.Entry) is var (author, advice))
             {
-                AddTip(container, itemId, entry);
+                AddAdviceTip(option, container, ev.Id.Entry, author, advice);
                 added = true;
             }
             if (added)
@@ -120,6 +131,58 @@ internal static class Tips
         tip.ItemRectChanged += Place;
         title.ItemRectChanged += Place;
     }
+
+    // An author's advice on the event. Long texts (some run to a few thousand characters) get
+    // what height the screen has left below the other tips and scroll with the mouse wheel
+    // while the option is hovered: moving onto the tip would close it.
+    private const float ScreenMargin = 20f;
+    private const float MinAdviceHeight = 150f;
+    // A wheel step scrolls an eighth of the text's height on screen.
+    private const float ScrollSteps = 8f;
+    private const string WheelMeta = "tierlist_advice_wheel";
+    private static RichTextLabel? _scrollable;
+
+    private static void AddAdviceTip(NEventOptionButton option, Container container, string eventId, string author, string advice)
+    {
+        var tip = AddTip(container, AdviceTipGroup, eventId, $"{author}{(author.EndsWith('s') ? "'" : "'s")} Advice", Tidy(advice).Replace("[", "[lb]"));
+        var text = tip.GetNode<MegaRichTextLabel>("%Description");
+        var excess = container.Size.Y - (container.GetViewportRect().Size.Y - 2 * ScreenMargin);
+        var height = Math.Max(MinAdviceHeight, text.Size.Y - excess);
+        if (excess > 0 && height < text.Size.Y)
+        {
+            var before = tip.Size.Y;
+            text.FitContent = false;
+            text.ScrollActive = true;
+            text.CustomMinimumSize = new Vector2(text.CustomMinimumSize.X, height);
+            text.Size = new Vector2(text.Size.X, height);
+            tip.ResetSize();
+            container.Size = new Vector2(container.Size.X, container.Size.Y - (before - tip.Size.Y));
+        }
+        _scrollable = text;
+        if (option.HasMeta(WheelMeta))
+            return;
+        option.SetMeta(WheelMeta, true);
+        option.Connect(Control.SignalName.GuiInput, Callable.From<InputEvent>(e =>
+        {
+            // A mouse wheel step, or a two-finger swipe on a trackpad (a pan gesture), by as much
+            // as the game's own scroll areas move.
+            float? steps = e switch
+            {
+                InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.WheelDown } wheel => Factor(wheel),
+                InputEventMouseButton { Pressed: true, ButtonIndex: MouseButton.WheelUp } wheel => -Factor(wheel),
+                InputEventPanGesture pan => pan.Delta.Y,
+                _ => null,
+            };
+            if (steps == null || _scrollable is not { } label || !GodotObject.IsInstanceValid(label) || !label.IsVisibleInTree() || !label.ScrollActive)
+                return;
+            var bar = label.GetVScrollBar();
+            bar.Value += steps.Value * bar.Page / ScrollSteps;
+            option.AcceptEvent();
+        }));
+    }
+
+    // A wheel without steps (a smooth wheel) gives how far it turned, a plain one nothing.
+    private static float Factor(InputEventMouseButton wheel) => wheel.Factor > 0 ? wheel.Factor : 1f;
 
     private static string Colour(Color c) => "#" + c.ToHtml(includeAlpha: false);
 
@@ -228,10 +291,21 @@ internal static class Tips
 
     private static string Capital(string word) => char.ToUpperInvariant(word[0]) + word[1..];
 
+    // A winrate's change in the colour of its tier, as the server rates it.
+    private static readonly Dictionary<string, Color> TierColours = new()
+    {
+        ["S"] = new Color("#408abf"),
+        ["A"] = new Color("#6ba036"),
+        ["B"] = new Color("#92a036"),
+        ["C"] = new Color("#a9792c"),
+        ["D"] = new Color("#a04836"),
+        ["F"] = new Color("#a03636"),
+    };
+
     private static string Winrate(double? delta, string? tier, string label) =>
         delta == null
             ? $"[color={Dim}]{label}: too little data[/color]"
-            : $"[color={Colour((Badges.TierColour(tier) ?? new Color("#888888")).Lightened(0.25f))}]{Badges.Percent(delta.Value, signed: true)}[/color] {label}";
+            : $"[color={Colour((tier != null && TierColours.TryGetValue(tier, out var c) ? c : new Color("#888888")).Lightened(0.25f))}]{Badges.Percent(delta.Value, signed: true)}[/color] {label}";
 
     /// <summary>A setting's explanation, where the game shows its own settings' tips.</summary>
     public static void ShowForSetting(Control row, string title, string text)
@@ -244,11 +318,10 @@ internal static class Tips
         set.SetMeta(DoneMeta, true);
         AddTip(container, SettingTipGroup, row.Name, title, text);
         set.GlobalPosition = row.GlobalPosition + MegaCrit.Sts2.Core.Nodes.Screens.Settings.NSettingsScreen.settingTipsOffset;
-        // Left just enough to stay on screen, should a title make the tip wider. (The game's
-        // own correction moves it onto the row's controls.)
-        var overflow = container.GetGlobalRect().End.X - row.GetViewportRect().Size.X;
-        if (overflow > 0)
-            set.GlobalPosition += Vector2.Left * overflow;
+        // Left and up just enough to stay on screen, should a title make the tip wider or the
+        // row be near the bottom. (The game's own correction moves it onto the row's controls.)
+        var overflow = container.GetGlobalRect().End - row.GetViewportRect().Size + Vector2.One * ScreenMargin;
+        set.GlobalPosition -= new Vector2(Math.Max(0, overflow.X - ScreenMargin), Math.Max(0, overflow.Y));
     }
 
     /// <summary>

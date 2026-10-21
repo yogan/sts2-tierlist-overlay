@@ -25,14 +25,16 @@ SAVES = Path.home() / "Library/Application Support/SlayTheSpire2/steam"
 # The run history schema_version that count_history (and History.cs) were checked against.
 KNOWN_SCHEMA = 9
 PREFIX = {"cards": "CARD.", "relics": "RELIC.", "potions": "POTION."}
-# Per kind: the badge's label, the tip's line (taken, offered, share).
+# Per kind: the tip's line (taken, offered, share).
 PERSONAL_KINDS = {
-    "reward": ("Pick", "Picked {} of {} ({})"),
-    "skip": ("Pick", "Picked Skip {} of {} ({})"),
-    "ancient": ("Pick", "Picked {} of {} ({})"),
-    "shop": ("Buy", "Bought {} of {} ({})"),
-    "remove": ("Buy", "Removed {} of {} ({})"),
+    "reward": "Picked {} of {} ({})",
+    "skip": "Picked Skip {} of {} ({})",
+    "ancient": "Picked {} of {} ({})",
+    "shop": "Bought {} of {} ({})",
+    "remove": "Removed {} of {} ({})",
 }
+# Below this many offers a badge shows the counts instead of the share (Badges.MinOffersForShare).
+MIN_OFFERS_FOR_SHARE = 5
 
 
 def count_history(runs, character):
@@ -295,7 +297,7 @@ def count_events(runs):
 def first_page_counts(history, event, key):
     """An option on an event's first page: picked in how many of the event's visits that offered it."""
     picked, visits = history["picked"].get(key, 0), history["visits"].get(event, 0) - history["locked"].get(key, 0)
-    return (f"Pick {picked}/{visits}" if picked else "Unpicked",
+    return (personal_label(picked, visits) if picked else "Unpicked",
             f"Picked in {picked} of {visits} visits" if picked else f"Never picked in {visits} visits")
 
 
@@ -303,7 +305,7 @@ def baths_counts(history, event, key):
     """An option on Abyssal Baths' repeating page: picked how often of the times it came up."""
     taken = history["times"].get(key, 0)
     shown = sum(n for k, n in history["times"].items() if k.startswith(BATHS_PAGE))
-    return f"Pick {taken}/{shown}", f"Picked {taken} of {shown} times"
+    return personal_label(taken, shown), f"Picked {taken} of {shown} times"
 
 
 def event_options(view):
@@ -341,9 +343,9 @@ def check_event_placement(result, view, options, shot):
 
 
 def check_event(result, event, history, shot_name, expect=first_page_counts):
-    """Each option of the event on screen shows "Pick n/m" or "Unpicked" from all characters'
-    visits (`expect`: the badge and the tip's line), placed as check_event_placement says, and
-    its tip spells that out."""
+    """Each option of the event on screen shows its share ("33%"), counts ("2/4") or
+    "Unpicked" from all characters' visits (`expect`: the badge and the tip's line), placed as
+    check_event_placement says, and its tip spells that out."""
     view = inspect()
     shot = screenshot(shot_name)
     result.screenshots.append(shot)
@@ -410,8 +412,9 @@ def remove_test_history():
     shutil.rmtree(TEST_HISTORY, ignore_errors=True)
 
 
-def personal_label(kind, c):
-    return f"{PERSONAL_KINDS[kind][0]} {c[0]}/{c[1]}"
+def personal_label(taken, offered):
+    """A count badge's text: the share taken, or the counts below MIN_OFFERS_FOR_SHARE offers."""
+    return f"{taken}/{offered}" if offered < MIN_OFFERS_FOR_SHARE else percent(100 * taken / offered)
 
 
 def personal_entry(history, kind, item_id):
@@ -431,7 +434,7 @@ def check_personal_badges(result, view, history, context_type, items):
     for item_id, kind, group in items:
         shown, c = personal_entry(history, kind, item_id)
         mine = [b for b in badges if b["item_id"] == item_id]
-        want = {"unpicked": "Unpicked", "counts": personal_label(kind, c)}.get(shown)
+        want = {"unpicked": "Unpicked", "counts": personal_label(*c)}.get(shown)
         if want is None:
             if mine:
                 result.fail(f"{item_id}: never offered, but shows {mine[0]['label']!r}")
@@ -480,7 +483,7 @@ def check_personal_tip(result, item, kind, group, history, shot_name):
         if lower:
             wanted.append(f"{verb.capitalize()} in {lower} {'run' if lower == 1 else 'runs'} below A7")
     else:
-        wanted = [PERSONAL_KINDS[kind][1].format(c[0], c[1], percent(100 * c[0] / c[1]))]
+        wanted = [PERSONAL_KINDS[kind].format(c[0], c[1], percent(100 * c[0] / c[1]))]
     if shown == "counts" and group in ("cards", "relics") and kind not in ("skip", "remove") and history["wins"]:
         w = history["wins"]
         wanted.append(f"In {history['in_wins'].get((group, item['id']), 0)} of your {w} {'win' if w == 1 else 'wins'}")

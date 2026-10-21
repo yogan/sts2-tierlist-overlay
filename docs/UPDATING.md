@@ -99,5 +99,10 @@ fails until that constant is raised. The routine:
   to the mod's own request (from the game log), so they also notice changes to the API.
 - `logged_out` logs out through the settings and restores the login from a copy of
   `account.cfg`. It restarts the game twice.
+- Event advice (`Advice.cs`) comes from `https://sts2.untapped.gg/api/v1/commentary/events`, a
+  list of `{text, author}` per event ID (`ABYSSAL_BATHS`, as `EventModel.Id.Entry`). It is cached
+  in `cache/event-advice.cache` and refreshed when older than a day. Delete the file to force a
+  refresh. `event_advice` picks events by whose advice they have: when Untapped.gg adds or
+  changes some, it says which to pick instead.
 - The requests (`Stats.cs`) send the game's own IDs, act and room type. If an endpoint starts
   failing, the game log has the HTTP status and the start of the answer.

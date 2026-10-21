@@ -24,11 +24,11 @@ the tier ones with the badges on the tier list.
 import argparse
 import sys
 
-from checklib import game, global_stats, personal, settings, tiers
+from checklib import advice, game, global_stats, personal, settings, tiers
 from checklib.game import BADGE_KEYS, CheckError, read_settings
 from checklib.verify import Result, RunExhausted, TierLists
 
-SCENARIOS = {**tiers.SCENARIOS, **settings.SCENARIOS, **global_stats.SCENARIOS, **personal.SCENARIOS}
+SCENARIOS = {**tiers.SCENARIOS, **settings.SCENARIOS, **global_stats.SCENARIOS, **personal.SCENARIOS, **advice.SCENARIOS}
 # Scenarios that need no run, only the game's files and log.
 NO_SETUP = {"lists"}
 # Scenarios that choose the badges themselves. The others check tier badges.
