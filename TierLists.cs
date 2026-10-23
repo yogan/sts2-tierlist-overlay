@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Godot;
+using MegaCrit.Sts2.Core.Models;
 
 namespace TierListOverlay;
 
@@ -12,7 +13,11 @@ namespace TierListOverlay;
 /// <param name="GoodUpgrade">Whether upgrading this card is worth it.</param>
 /// <param name="MaxCopies">How many copies the deck wants at most, if limited.</param>
 /// <param name="Kind">"cards", "relics" or "potions", as the list groups them.</param>
-public sealed record TierEntry(string Tier, string Color, string Commentary, string Author, bool GoodUpgrade, int? MaxCopies, string Kind);
+public sealed record TierEntry(string Tier, string Color, string Commentary, string Author, bool GoodUpgrade, int? MaxCopies, string Kind)
+{
+    /// <summary>The character whose list rated a card of theirs, when it is not the player's (e.g. "defect").</summary>
+    public string? RatedFor { get; init; }
+}
 
 /// <summary>
 /// Loads tier lists from the public Untapped.gg API, caching them next to the mod DLL so the
@@ -62,15 +67,35 @@ internal static class TierLists
 
     /// <summary>
     /// Looks an item up in the chosen author's lists: the current character's list wins over
-    /// the colorless list. Relics and potions fall back to Baalorlord's lists, since Jorbs
-    /// rates neither.
+    /// the colorless list. Another character's card (Kaleidoscope, Prismatic Gem, Splash, …)
+    /// comes from that character's list, marked with whose it is. Relics and potions fall back
+    /// to Baalorlord's lists, since Jorbs rates neither.
     /// </summary>
     public static bool TryGet(string? characterId, string itemId, out TierEntry entry, bool isCard = true)
     {
         var author = Settings.Author;
         if (TryGet(author, characterId, itemId, out entry))
             return true;
+        if (isCard && OwnerOf(itemId) is { } owner && owner != characterId?.ToLowerInvariant()
+            && TryGet(author, owner, itemId, out entry))
+        {
+            entry = entry with { RatedFor = owner };
+            return true;
+        }
         return !isCard && author != Settings.Baalorlord && TryGet(Settings.Baalorlord, characterId, itemId, out entry);
+    }
+
+    // Card ID -> the character whose pool has it, by list name ("defect"). Colorless cards
+    // are in no character's pool.
+    private static Dictionary<string, string>? _owners;
+
+    private static string? OwnerOf(string cardId)
+    {
+        _owners ??= ModelDb.AllCharacters
+            .SelectMany(c => c.CardPool.AllCardIds.Select(id => (Card: id.Entry, Owner: c.CardPool.Title)))
+            .GroupBy(p => p.Card)
+            .ToDictionary(g => g.Key, g => g.First().Owner);
+        return _owners.TryGetValue(cardId, out var owner) ? owner : null;
     }
 
     private static bool TryGet(string author, string? characterId, string itemId, out TierEntry entry)

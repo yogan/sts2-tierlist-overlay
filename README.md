@@ -10,6 +10,9 @@ Baalorlord and Jorbs tier lists from Untapped.gg and was inspired by the Untappe
   options.
 - **Commentary** from the list's author in an extra hover tip, and a mark on cards that are a
   good upgrade.
+- **Other characters' cards** (Kaleidoscope, Prismatic Gem, Splash, …) get the tier from their
+  own character's list. Their tip says whose list that is: rated for a Defect deck, a card may
+  be worth less in yours.
 - **Personal stats**, if you like: how often you took an item when it was offered in your own
   past runs, and how often you picked each option of an event (see below).
 - **Settings** in a *Tier List* tab of the game's settings: what the badges show (the tier list,

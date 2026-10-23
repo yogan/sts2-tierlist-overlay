@@ -6,6 +6,7 @@ using Godot;
 using MegaCrit.Sts2.addons.mega_text;
 using MegaCrit.Sts2.Core.Helpers;
 using MegaCrit.Sts2.Core.HoverTips;
+using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Nodes.GodotExtensions;
 using MegaCrit.Sts2.Core.Nodes.Cards;
 using MegaCrit.Sts2.Core.Nodes.Events;
@@ -108,6 +109,9 @@ internal static class Tips
     private static void AddTip(Container container, string itemId, TierEntry entry)
     {
         var text = string.IsNullOrWhiteSpace(entry.Commentary) ? "" : Tidy(entry.Commentary).Replace("[", "[lb]");
+        // Another character's card: rated for their decks, which may need it more than yours.
+        if (entry.RatedFor != null && RatedFor(entry.RatedFor) is { } ratedFor)
+            text = ratedFor + (text == "" ? "" : "\n") + text;
         // A flag in the list, shown in the green the game gives upgraded card names.
         if (entry.GoodUpgrade)
             text += (text == "" ? "" : "\n") + $"[color=#{StsColors.green.ToHtml(includeAlpha: false)}]Good upgrade[/color]";
@@ -130,6 +134,16 @@ internal static class Tips
         Place();
         tip.ItemRectChanged += Place;
         title.ItemRectChanged += Place;
+    }
+
+    // "Rated for Defect": the character's energy icon, as on their cards, and their name in
+    // the colour the game gives it. Named like in the stats tips ("Defect", not "The Defect").
+    private static string? RatedFor(string list)
+    {
+        if (ModelDb.AllCharacters.FirstOrDefault(c => c.CardPool.Title == list) is not { } character)
+            return null;
+        var icon = $"[img]res://images/packed/sprite_fonts/{character.CardPool.EnergyColorName}_energy_icon.png[/img]";
+        return $"{icon} [color={Dim}]Rated for[/color] [color={Colour(character.NameColor)}]{Capital(list)}[/color]";
     }
 
     // An author's advice on the event. Long texts (some run to a few thousand characters) get

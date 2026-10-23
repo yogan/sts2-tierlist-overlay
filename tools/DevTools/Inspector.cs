@@ -48,7 +48,10 @@ internal static class Inspector
                 case NCard card:
                     // The card frame is the visible card. NCard itself has no size and other
                     // children (glow, hitbox) extend far beyond the card.
-                    cards.Add(Describe(card, card.Model?.Id.Entry, toWindow, CardFrameField?.GetValue(card) as Control));
+                    var cardInfo = Describe(card, card.Model?.Id.Entry, toWindow, CardFrameField?.GetValue(card) as Control);
+                    // The card's pool ("defect", "colorless", …): other characters' cards are rated in their lists.
+                    cardInfo["pool"] = card.Model?.Pool.Title;
+                    cards.Add(cardInfo);
                     break;
                 case NRelic relic:
                     relics.Add(Describe(relic, relic.Model?.Id.Entry, toWindow));

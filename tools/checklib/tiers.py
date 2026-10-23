@@ -39,6 +39,32 @@ def scenario_card_reward(result, tiers):
     act("skip_card_reward")
 
 
+def scenario_kaleidoscope(result, tiers):
+    """Other characters' cards (Kaleidoscope: two card rewards from other characters) show
+    their character's tier, and the tip says whose list rated them."""
+    console("relic add KALEIDOSCOPE")
+    wait_state("rewards")
+    time.sleep(1.5)
+    # A skipped reward stays on the rewards screen.
+    for n in range(2):
+        act("claim_reward", index=n)
+        wait_state("card_reward")
+        time.sleep(1.5)
+        view = inspect()
+        result.screenshots.append(screenshot(f"kaleidoscope{n}"))
+        cards = [c for c in view["cards"] if c["on_screen"] and in_context(c, "NCardRewardSelectionScreen")]
+        if not any(tiers.rated_for(c.get("pool")) for c in cards):
+            result.fail(f"no other character's card offered: {[(c['id'], c.get('pool')) for c in cards]}")
+        check_badges(result, view, tiers, "cards", "NCardRewardSelectionScreen")
+        for i, card in enumerate(cards):
+            check_tip(result, tiers, card, f"kaleidoscope{n}_tip{i}")
+        hover(10, 10)
+        act("skip_card_reward")
+        wait_state("rewards")
+        time.sleep(1)
+    console("relic remove KALEIDOSCOPE")
+
+
 def scenario_choose_a_card(result, tiers):
     """'Choose a card' screen, opened by a Colorless Potion in combat (colorless list)."""
     enter_combat()
@@ -157,7 +183,8 @@ def scenario_remove(result, tiers):
 
 
 def scenario_simple_grid(result, tiers):
-    """Card choice grid offered as a reward (Sea Glass: cards from another character)."""
+    """Card choice grid offered as a reward (Sea Glass. Added by the console it offers Ironclad
+    cards, the test character's own. Other characters' cards: kaleidoscope)."""
     grid_from_relic(result, tiers, "SEA_GLASS", "NSimpleCardSelectScreen", 0, "simple_grid")
 
 
@@ -260,6 +287,7 @@ SCENARIOS = {
     "enchant": scenario_enchant,
     "remove": scenario_remove,
     "simple_grid": scenario_simple_grid,
+    "kaleidoscope": scenario_kaleidoscope,
     "bundle": scenario_bundle,
     "deck_view": scenario_deck_view,
     "lists": scenario_lists,

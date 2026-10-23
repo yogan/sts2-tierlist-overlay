@@ -25,7 +25,9 @@ class Entry:
 class TierLists:
     """The mod's cached tier lists, looked up like the mod does: the chosen author's lists,
     where the current character's list wins over the colorless list (lists rate colorless
-    cards per character). Relics and potions fall back to Baalorlord, who rates them."""
+    cards per character). Another character's card comes from that character's list (`pool`,
+    as DevTools reports it for a card). Relics and potions fall back to Baalorlord, who rates
+    them."""
 
     AUTHORS = ("baalorlord", "jorbs")
 
@@ -52,15 +54,23 @@ class TierLists:
     def author(self):
         return read_settings()["author"].lower()
 
-    def _get(self, author, item_id):
-        own = self.lists.get((author, (self.character or "").lower()), {})
+    def _get(self, author, item_id, character=None):
+        own = self.lists.get((author, (character or self.character or "").lower()), {})
         return own.get(item_id) or self.lists.get((author, "colorless"), {}).get(item_id)
 
-    def get(self, item_id, default=None, card=True):
+    def get(self, item_id, default=None, card=True, pool=None):
         found = self._get(self.author, item_id)
+        if found is None and card and self.rated_for(pool):
+            found = self._get(self.author, item_id, pool)
         if found is None and not card:
             found = self._get("baalorlord", item_id)
         return found or default
+
+    def rated_for(self, pool):
+        """The other character whose list rates a card from `pool`, if not the player's."""
+        if pool and pool != "colorless" and pool != (self.character or "").lower() and (self.AUTHORS[0], pool) in self.lists:
+            return pool
+        return None
 
 
 @dataclass
@@ -147,7 +157,7 @@ def check_badges(result, view, tiers, kind, context_type, types=None):
     for item in items:
         if not fully_inside(item["rect"], window):
             continue
-        expected = tiers.get(item["id"], card=kind == "cards")
+        expected = tiers.get(item["id"], card=kind == "cards", pool=item.get("pool"))
         near = owners.get(id(item), [])
         if expected is None:
             result.note(f"{item['id']}: not in tier list")
@@ -166,9 +176,10 @@ def check_badges(result, view, tiers, kind, context_type, types=None):
 
 def check_tip(result, tiers, item, shot_name=None):
     """Hovering a rated item shows the author's tip with its tier and commentary."""
-    expected = tiers.get(item["id"], card=item["type"] == "NCard")
+    expected = tiers.get(item["id"], card=item["type"] == "NCard", pool=item.get("pool"))
     if expected is None:
         return
+    rated_for = tiers.rated_for(item.get("pool")) if item["type"] == "NCard" else None
     # The tip normally shows within a frame or two. Allow for screens still animating in.
     mine = lambda view: [t for t in view["tier_tips"] if t["visible"] and t["item_id"] == item["id"]]
     view = hover_until(centre(item["rect"]), mine)
@@ -187,8 +198,13 @@ def check_tip(result, tiers, item, shot_name=None):
         result.fail(f"{item['id']}: tip lacks commentary {expected.commentary[:40]!r}: {text[:80]!r}")
     elif not any(overlaps(tips[0]["rect"], t["rect"]) for t in view["hover_tips"]):
         result.fail(f"{item['id']}: tip is not part of the game's hover tips")
-    elif "  " in text or "\n\n" in text:
+    # The "Rated for" line starts with an energy icon, which reads as a space here.
+    elif "  " in (commentary := text.split("\n", 1)[-1] if rated_for else text) or "\n\n" in commentary:
         result.fail(f"{item['id']}: tip has a double space or blank line: {text[:120]!r}")
+    elif bool(rated_for) != ("Rated for" in text.split("\n")[0]) or (rated_for and f"rated for {rated_for}" not in text.split("\n")[0].lower()):
+        result.fail(f"{item['id']}: from the {item.get('pool')} pool, but the tip starts {text[:30]!r}")
+    elif rated_for and "_energy_icon.png" not in (tips[0]["bbcode"] or "").split("\n")[0]:
+        result.fail(f"{item['id']}: the tip's 'Rated for' line has no energy icon")
     elif expected.good_upgrade != ("[color=#7fff00]good upgrade[/color]" in (tips[0]["bbcode"] or "").lower()):
         result.fail(f"{item['id']}: good_upgrade={expected.good_upgrade}, but tip reads {tips[0]['bbcode']!r}")
     elif share_covered(item["rect"], tips[0]["rect"]) > 0.05:
@@ -337,7 +353,8 @@ def check_tooltip_layering(result, view, tiers, shot):
     for badge in view["badges"]:
         if not (badge["visible"] and badge["on_screen"]):
             continue
-        colour = hex_rgb(tiers.get(badge["item_id"], ("", "#808080"))[1])
+        pool = next((c.get("pool") for c in view["cards"] if c["id"] == badge["item_id"]), None)
+        colour = hex_rgb(tiers.get(badge["item_id"], ("", "#808080"), pool=pool)[1])
         # The tier tip's own badge, in the same colour, is not the item's badge showing through.
         tip_badges = [t["badge_rect"] for t in view["tier_tips"] if t["visible"] and t.get("badge_rect")]
         for tip in view["hover_tips"]:
