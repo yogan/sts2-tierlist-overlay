@@ -11,8 +11,8 @@ import shutil
 import time
 from pathlib import Path
 
-from .game import (GAME_APP, MCP, MOD_DIR, CheckError, _request, act, hover, hover_until, inspect, log_length, log_since, open_ancient,
-                   open_card_reward, open_event, open_shop, read_settings, screenshot, wait_for)
+from .game import (GAME_APP, MCP, MOD_DIR, CheckError, _request, act, console, hover, hover_until, inspect, log_length, log_since,
+                   open_ancient, open_card_reward, open_event, open_shop, read_settings, screenshot, wait_for, wait_state)
 from .geometry import centre, fully_inside, share_covered
 from .global_stats import percent
 from .settings import ensure_stats, set_setting
@@ -540,7 +540,7 @@ def scenario_personal_card_reward(result, tiers):
         act("skip_card_reward")
 
         # Tier badges, your stats in the tips all the same.
-        set_setting("cards", "tiers")
+        set_setting("badges", "tiers")
         open_card_reward()
         view = inspect()
         cards = reward_cards(view)
@@ -654,13 +654,52 @@ def scenario_personal_ancient(result, tiers):
         remove_test_history()
 
 
+def scenario_no_stats_screens(result, tiers):
+    """Stats badges: a screen without the chosen stats shows no badges, never tiers. Your
+    stats on the upgrade grid (the run history has none), other players' on a treasure chest's
+    relic. The tier list's tips stay."""
+    ensure_stats(True, "personal")
+    console("room RestSite")
+    s = wait_state("rest_site")
+    act("choose_rest_option", index=next(o for o in s["rest_site"]["options"] if o["id"] == "SMITH")["index"])
+    wait_state("card_select")
+    time.sleep(1.5)
+    view = inspect()
+    result.screenshots.append(screenshot("no_stats_upgrade"))
+    cards = [c for c in view["cards"] if in_context(c, "NDeckUpgradeSelectScreen") and fully_inside(c["rect"], view["window"])]
+    shown = [b for b in view["badges"] if b["visible"] and in_context(b, "NDeckUpgradeSelectScreen")]
+    if shown:
+        result.fail(f"your stats, upgrade grid: badges {[(b['item_id'], b['label']) for b in shown]}, expected none")
+    else:
+        result.note(f"your stats, upgrade grid: no badges on {len(cards)} cards ✓")
+    rated = [c for c in cards if tiers.get(c["id"])]
+    if rated:
+        check_tip(result, tiers, rated[0], "no_stats_upgrade_tip")
+    hover(10, 10)
+    act("cancel_selection")
+
+    ensure_stats(True, "global")
+    console("room Treasure")
+    wait_state("treasure")
+    time.sleep(3)  # the chest opens with an animation
+    view = inspect()
+    result.screenshots.append(screenshot("no_stats_treasure"))
+    shown = [b for b in view["badges"] if b["visible"] and in_context(b, "NTreasureRoomRelicCollection")]
+    if shown:
+        result.fail(f"other players' stats, treasure: badges {[(b['item_id'], b['label']) for b in shown]}, expected none")
+    else:
+        result.note("other players' stats, treasure: no badges ✓")
+    act("claim_treasure_relic", index=0)
+
+
 def scenario_personal_event(result, tiers):
     """Personal stats: event options show your counts from all characters. An option the event
     locks without a card to enchant or enough gold counts only the visits that offered it.
     Badges off: the tip stays."""
     set_setting("stats_tips", True)
-    if read_settings()["events"] != "personal":
-        set_setting("events", "personal")
+    ensure_stats(True, "personal")
+    if not read_settings()["events"]:
+        set_setting("events", True)
     open_event(EVENTS[0])
     character = inspect()["character"]
     # The options of each event, from the screen: open each once.
@@ -687,7 +726,7 @@ def scenario_personal_event(result, tiers):
         check_event(result, "ABYSSAL_BATHS", history, "personal_event_repeat", baths_counts)
 
         # Badges off: none to see, the stats tip all the same.
-        set_setting("events", "none")
+        set_setting("events", False)
         open_event(EVENTS[0])
         view = inspect()
         if [b for b in view["badges"] if b["visible"] and in_context(b, "NEventOptionButton")]:
@@ -701,7 +740,7 @@ def scenario_personal_event(result, tiers):
         hover(10, 10)
     finally:
         remove_test_history()
-        set_setting("events", "personal")
+        set_setting("events", True)
 
 
 def history_files(profile):
@@ -761,6 +800,7 @@ def scenario_personal_real(result, tiers):
 
 
 SCENARIOS = {
+    "no_stats_screens": scenario_no_stats_screens,
     "personal_card_reward": scenario_personal_card_reward,
     "personal_shop": scenario_personal_shop,
     "personal_ancient": scenario_personal_ancient,

@@ -8,6 +8,9 @@ that show it (`tools/check.py --list`).
 
 - **Other players.** Global stats are "other players'" numbers. Untapped.gg is named only where
   the login is concerned: the account row in the settings and the login hint at game start.
+- **Short where there is no room.** A settings choice names its options in two words, which fit
+  the arrows without the game shrinking the text: "Personal stats", "Global stats". Tips, which
+  have room, say whose they are: "your stats", "other players' stats".
 - **Whose and what.** A stats tip's heading says whose numbers follow: "Your Ironclad runs",
   "Other players' Ironclad runs", "Other players, all characters". What was counted goes with
   them: runs at Ascension 7+ ("A7" where a line is short of room).
@@ -23,9 +26,9 @@ that show it (`tools/check.py --list`).
   states what is there now.
 - **An intro earns its place**: the first line of a settings tip says something the row's label
   doesn't.
-- **Only the options on offer.** A settings tip explains the choices the row offers right now
-  (`Option.Tip` and `Available` in `SettingsUi.cs`): logged out, the badge rows' tips leave out
-  global stats.
+- **Only what applies.** A settings tip explains the row's choices as things stand (`Option.Tip`
+  in `SettingsUi.cs`): logged out, the badges row's tip says to log in for other players' stats
+  and what shows until then. A row that does nothing is greyed out, a tickbox unticked.
 
 ## Punctuation
 

@@ -110,8 +110,9 @@ public static class TierListOverlayMod
         }
     }
 
-    // The badge for a node: the stats the player chose where there are some, otherwise its
-    // tier. The stats it has (whichever the badge shows) go along for the hover tip.
+    // The badge for a node: its tier, or the stats the player chose where there are some. Never
+    // a tier among stats: without them the tier badge is hidden, there only for the item's hover
+    // tips. The stats it has (whichever the badge shows) go along for the hover tip.
     // Keep: global stats are on their way. Leave the item's badge as it is until they arrive,
     // so it does not flash from tier to stats. Not a badge left from another item on a reused
     // node.
@@ -124,8 +125,10 @@ public static class TierListOverlayMod
         var isCard = node is NCard;
         var tier = itemId is SkipId or RemoveId ? null : Lookup(characterId, itemId, isCard);
         var tierBadge = tier is var (id, tierEntry) ? Badges.ForTier(id, tierEntry, isCard && HasAncestor<NDeckUpgradeSelectScreen>(node)) : null;
+        // Hidden unless the badges show tiers.
+        var tierOnly = mode == BadgeMode.Tiers || tierBadge == null ? tierBadge : tierBadge with { Hidden = true };
         if (characterId == null || StatsSlot(node) is not var (screen, kind, group))
-            return (false, tierBadge);
+            return (false, tierOnly);
         var statsId = itemId is SkipId or RemoveId ? Stats.SingleId : itemId;
         var tips = Settings.StatsTips;
         // The run history has no upgrade stats: the game does not log what the smith offered.
@@ -133,7 +136,7 @@ public static class TierListOverlayMod
         if (mine is { Shown: false })
             mine = null;
         StatEntry? global = null;
-        var (act, answered) = (0, false);
+        var act = 0;
         if ((mode == BadgeMode.Global || tips) && Account.Usable && RequestFor(screen, characterId) is { } request)
         {
             act = request.Act;
@@ -143,7 +146,6 @@ public static class TierListOverlayMod
                     var shown = node.GetNodeOrNull<Control>(Badges.BadgeName)?.GetMeta("item_id", "").AsString();
                     return (shown == null || shown == itemId, null);
                 case Stats.Lookup.Ready:
-                    answered = true;
                     global = answer!.Get(group, statsId) is { HasData: true } entry ? entry : null;
                     // All characters' runs are the character's own for items only it can get.
                     if (global is { AllCharacters: true } && OwnItem(group, itemId))
@@ -158,12 +160,9 @@ public static class TierListOverlayMod
             BadgeMode.Personal when mine != null => mine.Unpicked
                 ? Badges.ForUnpicked(itemId, info!, tier?.Entry.Tier ?? "")
                 : Badges.ForPersonal(itemId, info!, tier?.Entry.Tier ?? ""),
-            // Global stats, but too little data for this item (or too few offers for a share): no
-            // badge rather than a tier beside the others' stats. A hidden tier badge still brings
-            // up the item's tips. Without any stats (no answer yet, offline, history not read) the
-            // whole screen shows tiers.
-            BadgeMode.Global when answered => tierBadge == null ? null : tierBadge with { Hidden = true },
-            _ => tierBadge,
+            // Stats, but too little data for this item (or too few offers for a share), or none
+            // on this screen: no badge.
+            _ => tierOnly,
         };
         if (info == null)
             return (false, badge);

@@ -100,6 +100,8 @@ internal static class Account
     private static Login? _login;
     private static DateTime _nextOfflineCheck;
     private static bool _checking;
+    // Set by the player's own login, which finishes in the background, for the next frame.
+    private static volatile bool _loggedIn;
 
     private sealed class Login
     {
@@ -131,9 +133,17 @@ internal static class Account
         Check(tokens);
     }
 
-    /// <summary>Checks an unreachable login again now and then, so stats come back.</summary>
+    /// <summary>
+    /// Checks an unreachable login again now and then, so stats come back. After the player's
+    /// own login, switches the badges to other players' stats.
+    /// </summary>
     public static void OnProcessFrame()
     {
+        if (_loggedIn)
+        {
+            _loggedIn = false;
+            Settings.OnLoggedIn();
+        }
         if (Status == State.Offline && _tokens is { } tokens && !_checking && DateTime.UtcNow >= _nextOfflineCheck)
             Check(tokens);
     }
@@ -418,6 +428,7 @@ internal static class Account
                 }
                 SetStatus(State.Connected, "");
                 Stats.Clear();
+                _loggedIn = true;
             }
             catch (Exception) when (login != _login)
             {

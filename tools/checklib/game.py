@@ -230,15 +230,14 @@ def log_since(line):
 
 # --- The mod's settings -------------------------------------------------------------------
 
-SETTING_DEFAULTS = {"cards": "tiers", "relics": "tiers", "potions": "tiers", "events": "personal", "deck": "tiers", "author": "Baalorlord",
-                    "commentary": True, "stats_tips": True, "stats_samples": False, "event_advice": True}
+SETTING_DEFAULTS = {"badges": "tiers", "cards": True, "relics": True, "potions": True, "events": True, "deck": True,
+                    "author": "Baalorlord", "commentary": True, "stats_tips": True, "stats_samples": False, "event_advice": True}
 # The mod's settings rows: tickboxes, and left/right choices with their options in order.
-TOGGLES = ("commentary", "stats_tips", "event_advice", "stats_samples")
+TOGGLES = ("cards", "relics", "potions", "events", "deck", "commentary", "stats_tips", "event_advice", "stats_samples")
 # Saved value -> label shown, per choice, in the order the arrows page through them.
-BADGES = {"none": "None", "tiers": "Tier list", "personal": "Personal stats", "global": "Global stats"}
-CHOICES = {"cards": BADGES, "relics": BADGES, "potions": BADGES, "events": {"none": "None", "personal": "Personal stats"},
-           "deck": {"none": "None", "tiers": "Tier list"},
-           "author": {"Baalorlord": "Baalorlord", "Jorbs": "Jorbs"}}
+SOURCES = {"tiers": "Tier list", "personal": "Personal stats", "global": "Global stats"}
+CHOICES = {"badges": SOURCES, "author": {"Baalorlord": "Baalorlord", "Jorbs": "Jorbs"}}
+# The kinds of item with badges from the chosen source, each a tickbox.
 BADGE_KEYS = ("cards", "relics", "potions")
 
 

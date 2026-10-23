@@ -4,8 +4,8 @@ import time
 
 from PIL import Image, ImageChops, ImageStat
 
-from .game import (BADGE_KEYS, CHOICES, TOGGLES, CheckError, _try_call, click, find_node, hover, hover_until, inspect,
-                   open_shop, read_settings, screenshot, tree, wait_for, walk)
+from .game import (BADGE_KEYS, CHOICES, MOD_DIR, SOURCES, TOGGLES, CheckError, _try_call, click, ensure_test_run, find_node, hover,
+                   hover_until, inspect, open_shop, read_settings, restart_game, screenshot, tree, wait_for, walk)
 from .geometry import box, centre, fully_inside, overlaps
 from .verify import ICON_TYPES, check_badges, check_tip, in_context
 
@@ -82,17 +82,20 @@ def set_setting(key, value):
 
 
 def ensure_stats(on, source="global"):
-    """Card, relic and potion badges on global (or personal) stats, or on the tier list."""
+    """Badges on global (or personal) stats, or on the tier list, on cards, relics and potions."""
     want = source if on else "tiers"
+    if read_settings()["badges"] != want:
+        set_setting("badges", want)
     for key in BADGE_KEYS:
-        if read_settings()[key] != want:
-            set_setting(key, want)
+        if read_settings()[key] is not True:
+            set_setting(key, True)
 
 
 def setting_tip(key):
     """The text of a settings row's tip while hovered, or None."""
     x, y, w, h = setting_row(tree("NSettingsScreen", 12), key)["rect"]
-    visible = lambda view: [t for t in view["setting_tips"] if t["visible"]]
+    # Its own: another row's tip can still be up.
+    visible = lambda view: [t for t in view["setting_tips"] if t["visible"] and t["item_id"] == f"TierListOverlay_{key}"]
     tips = visible(hover_until((x + w * 0.3, y + h / 2), visible))
     return " ".join((tips[0]["text"] or "").split()) if tips else None
 
@@ -138,12 +141,14 @@ def scenario_settings(result, tiers):
     result.screenshots.append(screenshot("settings"))
     for key in (*TOGGLES, *CHOICES):
         row = setting_row(screen, key)
+        # A greyed-out tickbox shows unticked: it does nothing then.
+        want = shown_for(key, before[key]) if key in CHOICES or row_enabled(row) else False
         if row is None:
             result.fail(f"settings row for {key} missing")
         elif not row.get("visible"):
             result.fail(f"settings row for {key} not visible")
-        elif shown_value(row) != shown_for(key, before[key]):
-            result.fail(f"settings row for {key} shows {shown_value(row)!r}, settings.cfg says {before[key]!r}")
+        elif shown_value(row) != want:
+            result.fail(f"settings row for {key} shows {shown_value(row)!r}, expected {want!r} (settings.cfg: {before[key]!r})")
     check_settings_hover(result, screen)
     general = find_node(screen, "GeneralSettings")
     if any(n["name"].startswith("TierListOverlay_") for n in walk(general)):
@@ -158,30 +163,54 @@ def scenario_settings(result, tiers):
         status, action = account_row(screen)
         if "@" not in status or action != "Log out":
             result.fail(f"logged in, the account row reads {status!r} with button {action!r}, expected the email and 'Log out'")
-        # The badge rows' tips explain the options on offer: global stats only when logged in.
-        tip = setting_tip("cards") or ""
-        if not all(f"{o}:" in tip for o in ("Tier list", "Personal stats", "Global stats")):
-            result.fail(f"logged in, the cards row's tip does not explain all options: {tip!r}")
+        # The badges row's tip explains its options, without a word about logging in.
+        tip = setting_tip("badges") or ""
+        if not all(f"{o}:" in tip for o in SOURCES.values()) or "Log in" in tip:
+            result.fail(f"logged in, the badges row's tip does not explain its options as it should: {tip!r}")
         hover(10, 10)
-        # The author's choice picks the event advice too, while there is some.
-        label = row_label(setting_row(screen, "author"))
-        want = "Tier list and event advice" if read_settings()["event_advice"] else "Tier list"
-        if label != want:
-            result.fail(f"logged in, the author row reads {label!r}, expected {want!r}")
+        # Paging through the source offers all three.
+        seen = []
+        for _ in SOURCES:
+            row = setting_row(tree("NSettingsScreen", 12), "badges")
+            seen.append(shown_value(row))
+            click(find_node(row, "RightArrow")["rect"])
+            time.sleep(0.6)
+        if sorted(seen) != sorted(SOURCES.values()):
+            result.fail(f"the badges row pages through {seen}, expected {list(SOURCES.values())}")
+        if row_label(setting_row(screen, "author")) != "Author":
+            result.fail(f"the author row reads {row_label(setting_row(screen, 'author'))!r}, expected 'Author'")
         tips_on = read_settings()["stats_tips"]
         if row_enabled(setting_row(screen, "stats_samples")) != tips_on:
             result.fail(f"sample sizes {'greyed out' if tips_on else 'not greyed out'} with stats tips {'on' if tips_on else 'off'}")
         close_settings()
 
+        # Personal stats on events applies only with personal stats as the badges, and shows
+        # unticked (but stays saved) otherwise.
+        set_setting("badges", "personal")
+        set_setting("events", True)
+        for source in ("tiers", "global", "personal"):
+            set_setting("badges", source)
+            screen = open_settings()
+            row = setting_row(screen, "events")
+            if row_enabled(row) != (source == "personal") or is_ticked(row) != (source == "personal"):
+                result.fail(f"with {source} badges, the events row is {'enabled' if row_enabled(row) else 'greyed out'} "
+                            f"and {'ticked' if is_ticked(row) else 'unticked'}")
+            if source == "tiers":
+                result.screenshots.append(screenshot("settings_events_greyed"))
+            close_settings()
+        if read_settings()["events"] is not True:
+            result.fail("showing the events row unticked changed its saved setting")
+        set_setting("badges", "tiers")
+
         # Relic badges off: shop cards keep their badges, relics lose them.
-        set_setting("relics", "none")
+        set_setting("relics", False)
         view, shot = open_shop("settings_no_relics")
         result.screenshots.append(shot)
         shop_relics = [b for b in view["badges"] if b["visible"] and in_context(b, "NMerchantRelic")]
         if shop_relics:
             result.fail(f"relic badges shown with relics off: {[b['item_id'] for b in shop_relics]}")
         check_badges(result, view, tiers, "cards", "NMerchantInventory")
-        set_setting("relics", "tiers")
+        set_setting("relics", True)
 
         # Jorbs: cards use his lists, relics stay with Baalorlord's.
         set_setting("author", "Jorbs")
@@ -198,9 +227,9 @@ def scenario_settings(result, tiers):
                 result.fail(f"tip title is {tips[0]['title']!r} with Jorbs chosen")
         hover(10, 10)
     finally:
-        now = read_settings()
-        for key in (*TOGGLES, *CHOICES):
-            if now[key] != before[key]:
+        # The source first: the events row can be set only with personal badges.
+        for key in ("badges", "events", *TOGGLES, *CHOICES):
+            if read_settings()[key] != before[key] and (key != "events" or read_settings()["badges"] == "personal"):
                 set_setting(key, before[key])
         # The mod's rows are copies of game rows. They must not drive the game's settings.
         screen = open_settings()
@@ -209,6 +238,50 @@ def scenario_settings(result, tiers):
         close_settings()
 
 
+# A settings.cfg from mod 1.2 to 1.5: a source per kind of badge.
+VERSION_2 = """[tierlist]
+
+settings_version=2
+cards="global"
+relics="none"
+potions="personal"
+events="none"
+deck="none"
+author="Jorbs"
+commentary=true
+stats_samples=false
+stats_tips=true
+event_advice=true
+"""
+# What the mod makes of it: the strongest source, and a tickbox per kind.
+FROM_VERSION_2 = {"badges": "global", "cards": True, "relics": False, "potions": True, "events": False, "deck": False, "author": "Jorbs"}
+
+
+def scenario_settings_migration(result, tiers):
+    """A settings.cfg from mod 1.5 (a source per kind of badge) carries over to one source and
+    a tickbox per kind. Restarts the game twice. The settings come back from a copy."""
+    path = MOD_DIR / "settings.cfg"
+    backup = path.read_text() if path.exists() else None
+    try:
+        path.write_text(VERSION_2)
+        restart_game()
+        now = read_settings()
+        result.note(f"carried over: { {k: now[k] for k in FROM_VERSION_2} }")
+        for key, want in FROM_VERSION_2.items():
+            if now[key] != want:
+                result.fail(f"{key} carried over as {now[key]!r}, expected {want!r}")
+        if "settings_version=3" not in path.read_text():
+            result.fail("settings.cfg not marked version 3")
+    finally:
+        if backup is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(backup)
+        restart_game()
+        ensure_test_run()
+
+
 SCENARIOS = {
     "settings": scenario_settings,
+    "settings_migration": scenario_settings_migration,
 }

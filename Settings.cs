@@ -1,25 +1,29 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Godot;
 
 namespace TierListOverlay;
 
-/// <summary>What a kind of badge shows. Kept in settings.cfg by its lower-case name.</summary>
+/// <summary>
+/// What a badge shows. The badges' source (all but None) is kept in settings.cfg by its
+/// lower-case name.
+/// </summary>
 internal enum BadgeMode
 {
     None,
     Tiers,
-    // The player's own numbers from their run history on the screens that have them, tiers elsewhere.
+    // The player's own numbers from their run history, on the screens that have them.
     Personal,
-    // Untapped.gg's stats where it has them (and the login works), tiers elsewhere.
+    // Untapped.gg's stats, on the screens it has them for (and while the login works).
     Global,
 }
 
 /// <summary>
 /// The player's choices, kept in settings.cfg next to the mod DLL and edited in the mod's tab
-/// of the game's settings screen (see SettingsUi). Badge settings name what the badge shows
-/// ("tiers"), so new sources are new values. A change of layout raises Version and adds a
-/// step to Migrate.
+/// of the game's settings screen (see SettingsUi). One source for every badge on what the game
+/// offers ("tiers"), so new sources are new values, and a toggle per kind of item. A screen
+/// never mixes sources. A change of layout raises Version and adds a step to Migrate.
 /// </summary>
 internal static class Settings
 {
@@ -28,16 +32,18 @@ internal static class Settings
 
     private const string Section = "tierlist";
     private const string VersionKey = "settings_version";
-    private const int Version = 2;
+    private const int Version = 3;
 
-    // The cards on offer: rewards (and Skip), "choose a card", bundles, the shop (and card
-    // removal), upgrades.
+    // What the badges on offers show: tiers, personal or global.
+    public const string BadgesKey = "badges";
+    // Where: the cards on offer (rewards and Skip, "choose a card", bundles, the shop and card
+    // removal, upgrades), relics (ancients' among them) and potions.
     public const string CardsKey = "cards";
     public const string RelicsKey = "relics";
     public const string PotionsKey = "potions";
-    // The options of events (not ancients, whose relics go with the relics): none or personal.
+    // The player's own counts on event options (not ancients'), with personal badges.
     public const string EventsKey = "events";
-    // The cards in the deck: deck view, remove, transform, enchant.
+    // Tiers on the cards in the deck, whatever the source: deck view, remove, transform, enchant.
     public const string DeckKey = "deck";
     public const string AuthorKey = "author";
     public const string CommentaryKey = "commentary";
@@ -50,11 +56,12 @@ internal static class Settings
 
     private static readonly Dictionary<string, Variant> Defaults = new()
     {
-        [CardsKey] = Value(BadgeMode.Tiers),
-        [RelicsKey] = Value(BadgeMode.Tiers),
-        [PotionsKey] = Value(BadgeMode.Tiers),
-        [EventsKey] = Value(BadgeMode.Personal),
-        [DeckKey] = Value(BadgeMode.Tiers),
+        [BadgesKey] = Value(BadgeMode.Tiers),
+        [CardsKey] = true,
+        [RelicsKey] = true,
+        [PotionsKey] = true,
+        [EventsKey] = true,
+        [DeckKey] = true,
         [AuthorKey] = Baalorlord,
         [CommentaryKey] = true,
         [StatsTipsKey] = true,
@@ -84,6 +91,8 @@ internal static class Settings
             return;
         if (from < 2)
             FromVersion1();
+        if (from < 3)
+            FromVersion2();
         Config.SetValue(Section, VersionKey, Version);
         Save();
         GD.Print($"[TierListOverlay] Settings carried over from version {from} to {Version}");
@@ -109,11 +118,26 @@ internal static class Settings
             Config.SetValue(Section, key, value);
     }
 
+    // Version 2 (mod 1.2 to 1.5): a source per kind of badge (none, tiers, personal, global),
+    // events none or personal, the deck none or tiers. The source becomes the strongest one
+    // chosen (global, then personal, then tiers), and each kind's choice whether it has badges.
+    private static void FromVersion2()
+    {
+        string Old(string key, string fallback) => Config.GetValue(Section, key, fallback).AsString();
+        var kinds = new[] { CardsKey, RelicsKey, PotionsKey }.ToDictionary(k => k, k => Old(k, Value(BadgeMode.Tiers)));
+        var source = new[] { BadgeMode.Global, BadgeMode.Personal }.FirstOrDefault(m => kinds.ContainsValue(Value(m)), BadgeMode.Tiers);
+        Config.SetValue(Section, BadgesKey, Value(source));
+        foreach (var (key, value) in kinds)
+            Config.SetValue(Section, key, value != Value(BadgeMode.None));
+        Config.SetValue(Section, EventsKey, Old(EventsKey, Value(BadgeMode.Personal)) == Value(BadgeMode.Personal));
+        Config.SetValue(Section, DeckKey, Old(DeckKey, Value(BadgeMode.Tiers)) != Value(BadgeMode.None));
+    }
+
     public static Variant Get(string key) => Config.GetValue(Section, key, Defaults[key]);
 
     public static void Set(string key, Variant value)
     {
-        Parsed.Remove(key);
+        _source = null;
         Config.SetValue(Section, key, value);
         Config.SetValue(Section, VersionKey, Version);
         Save();
@@ -129,32 +153,37 @@ internal static class Settings
 
     public static string Value(BadgeMode mode) => mode.ToString().ToLowerInvariant();
 
-    // What the player chose. Unknown values (from a newer version, or hand-edited) fall back
-    // to the default. Read every frame for every badge, so parsed once per change.
-    private static readonly Dictionary<string, BadgeMode> Parsed = new();
+    // The source the player chose. An unknown value (from a newer version, or hand-edited) falls
+    // back to the default. Read every frame for every badge, so parsed once per change.
+    private static BadgeMode? _source;
 
-    public static BadgeMode Chosen(string key)
+    public static BadgeMode Source
     {
-        if (Parsed.TryGetValue(key, out var mode))
-            return mode;
-        var value = Get(key).AsString();
-        if (!Enum.TryParse(value, ignoreCase: true, out mode) || !Enum.IsDefined(mode) || int.TryParse(value, out _))
-            mode = Enum.Parse<BadgeMode>(Defaults[key].AsString(), ignoreCase: true);
-        return Parsed[key] = mode;
+        get
+        {
+            if (_source is { } source)
+                return source;
+            var value = Get(BadgesKey).AsString();
+            if (!Enum.TryParse(value, ignoreCase: true, out source) || source == BadgeMode.None || !Enum.IsDefined(source) || int.TryParse(value, out _))
+                source = Enum.Parse<BadgeMode>(Defaults[BadgesKey].AsString(), ignoreCase: true);
+            return (_source = source).Value;
+        }
     }
 
-    // What the badges show: the choice, except that without a working login global stats
-    // become tiers. The choice itself stays, for the next login.
-    private static BadgeMode Shown(string key) =>
-        Chosen(key) is var mode && mode == BadgeMode.Global && !Account.Usable ? BadgeMode.Tiers : mode;
+    // What the badges show: the source, except that without a working login global stats
+    // become the player's own, the nearest to them. The choice itself stays, for the next login.
+    public static BadgeMode ShownSource => Source == BadgeMode.Global && !Account.Usable ? BadgeMode.Personal : Source;
 
-    public static BadgeMode Cards => Shown(CardsKey);
-    public static BadgeMode Relics => Shown(RelicsKey);
-    public static BadgeMode Potions => Shown(PotionsKey);
-    // Events have no tiers and no global stats.
-    public static BadgeMode Events => Chosen(EventsKey) == BadgeMode.Personal ? BadgeMode.Personal : BadgeMode.None;
-    // No stats for the cards in the deck.
-    public static bool Deck => Chosen(DeckKey) != BadgeMode.None;
+    private static BadgeMode On(string key) => Get(key).AsBool() ? ShownSource : BadgeMode.None;
+
+    public static BadgeMode Cards => On(CardsKey);
+    public static BadgeMode Relics => On(RelicsKey);
+    public static BadgeMode Potions => On(PotionsKey);
+    // Events have only the player's own counts.
+    public static bool EventsApply => Source == BadgeMode.Personal;
+    public static BadgeMode Events => EventsApply && Get(EventsKey).AsBool() ? BadgeMode.Personal : BadgeMode.None;
+    // Only tiers for the cards in the deck.
+    public static bool Deck => Get(DeckKey).AsBool();
     public static string Author => Get(AuthorKey).AsString() == Jorbs ? Jorbs : Baalorlord;
     public static bool Commentary => Get(CommentaryKey).AsBool();
     public static bool StatsTips => Get(StatsTipsKey).AsBool();
@@ -162,10 +191,16 @@ internal static class Settings
     // The advice comes from Untapped.gg, so it needs the login like global stats.
     public static bool EventAdvice => Get(EventAdviceKey).AsBool() && Account.Usable;
 
-    /// <summary>Whether any badge is set to global stats, shown or not (without a login).</summary>
-    public static bool AnyGlobalChosen =>
-        Chosen(CardsKey) == BadgeMode.Global || Chosen(RelicsKey) == BadgeMode.Global || Chosen(PotionsKey) == BadgeMode.Global;
+    /// <summary>Whether tiers show anywhere (badges or tips), so the choice of author matters.</summary>
+    public static bool AnyTiers =>
+        (ShownSource == BadgeMode.Tiers && (Get(CardsKey).AsBool() || Get(RelicsKey).AsBool() || Get(PotionsKey).AsBool())) || Deck || Commentary;
 
-    /// <summary>Whether tiers show anywhere (badges, fallbacks or tips), so the choice of list matters.</summary>
-    public static bool AnyTiers => Cards != BadgeMode.None || Relics != BadgeMode.None || Potions != BadgeMode.None || Deck || Commentary;
+    /// <summary>
+    /// After the player's own login: they want other players' stats, so the badges show them.
+    /// </summary>
+    public static void OnLoggedIn()
+    {
+        if (Source != BadgeMode.Global)
+            Set(BadgesKey, Value(BadgeMode.Global));
+    }
 }

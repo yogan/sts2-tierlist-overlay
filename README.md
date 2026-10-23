@@ -12,10 +12,11 @@ Baalorlord and Jorbs tier lists from Untapped.gg and was inspired by the Untappe
   good upgrade.
 - **Personal stats**, if you like: how often you took an item when it was offered in your own
   past runs, and how often you picked each option of an event (see below).
-- **Settings** in a *Tier List* tab of the game's settings: what the badges on cards, relics,
-  potions, events and deck screens show (none, the tier list, personal stats or global stats),
-  Baalorlord's or Jorbs' list, the commentary, stats and event advice tips, and the Untapped.gg
-  login. Jorbs rates cards only, so relics and potions always use Baalorlord's lists.
+- **Settings** in a *Tier List* tab of the game's settings: what the badges show (the tier list,
+  your stats or other players' stats) and on which items, your stats on events, tier badges on
+  deck screens, Baalorlord or Jorbs as the author, the commentary, stats and event advice tips,
+  and the Untapped.gg login. Jorbs rates cards only, so relics and potions always use
+  Baalorlord's lists.
 
 The lists are fetched for the installed game version at game start and cached next to the mod,
 so it also works offline.
@@ -31,10 +32,11 @@ often you took it with your other characters. The numbers come from the game's o
 the same files its Run History screen reads, for the current profile (modded and unmodded runs
 together). Runs count at Ascension 7+, in standard mode, alone, with the character you're
 playing. An item you never took there reads *Unpicked*, to try something new. Its tip says how
-often you passed it over, and whether you took it in runs below Ascension 7. Screens without
-personal stats (treasure, loot, upgrades, deck screens) show the tier list. The mod only reads
-the history. It never changes it, and it records nothing of its own. A finished run counts from
-the next screen on.
+often you passed it over, and whether you took it in runs below Ascension 7. A screen never
+mixes your stats with tiers: screens without them (treasure, loot, upgrades) show no badges.
+Deck screens keep their tier badges, which *Tier badges on deck screens* turns off. The mod
+only reads the history. It never changes it, and it records nothing of its own. A finished run
+counts from the next screen on.
 
 Event options (not ancients, whose relics go with the relic badges) show in how many of your
 visits you picked them ("71%", or "2/4" below 5 visits), from your Ascension 7+ runs with all
@@ -45,7 +47,7 @@ event locks without a card to enchant or enough gold (Self-Help Book's, Wongo's)
 the visits it was open, which the mod works out from your deck and gold before the visit. Where
 an option is offered at random (a dish on the conveyor), its tip says so. The badge sits at the
 right end of the option, or on its top edge when an option's text reaches that far. Pages with
-a single option get none. *Badges on events* turns them off.
+a single option get none. *Personal stats on events* turns them off.
 
 *Stats in hover tips* (on by default) shows your stats, and other players' when logged in, in
 an extra hover tip whatever the badges show.
@@ -58,11 +60,11 @@ stats. They're shown on card rewards (including Skip), ancient options, the shop
 card removal) and the rest site's upgrade screen. The hover tips spell them out, below your own
 stats, and add how the act's and the run's winrate changed when players took the item, with the
 tier list rating below them. To turn it on, press *Log in* at the bottom of the *Tier List* tab
-(it opens Untapped.gg's login in the browser), then set the badges to *Global stats*. Items
-with too little data show no badge, and screens without stats show the tier list. The login is
-kept in `account.cfg` next to the mod. *Log out* deletes it. Without a login, or when
-Untapped.gg is unreachable, the mod shows tiers as before. The mod only reads these stats. It
-sends none of your runs.
+(it opens Untapped.gg's login in the browser), and the badges switch to *Global stats*. Items
+with too little data show no badge, and screens without stats show none. The login is kept in
+`account.cfg` next to the mod. *Log out* deletes it. Without a login, or when Untapped.gg is
+unreachable, the badges show your own stats until it works again. The mod only reads these
+stats. It sends none of your runs.
 
 Logged in, event options also get Baalorlord's or Jorbs' advice on the event in an extra hover
 tip: the chosen list's author's, or the other's where they wrote none. Untapped.gg has advice on

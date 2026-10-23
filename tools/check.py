@@ -39,7 +39,7 @@ def prepare(name):
     if name in NO_SETUP:
         return
     game.setup()
-    if name not in OWN_BADGES and any(read_settings()[k] in ("global", "personal") for k in BADGE_KEYS):
+    if name not in OWN_BADGES and (read_settings()["badges"] != "tiers" or not all(read_settings()[k] for k in BADGE_KEYS)):
         settings.ensure_stats(False)
 
 

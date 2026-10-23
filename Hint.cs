@@ -4,8 +4,9 @@ using MegaCrit.Sts2.Core.Nodes.Screens.MainMenu;
 namespace TierListOverlay;
 
 /// <summary>
-/// One short note on the main menu, once per game start, when stats are on but the login does
-/// not work: the badges then show tiers, and the settings say why. Nothing during a run.
+/// One short note on the main menu, once per game start, when other players' stats are chosen
+/// but the login does not work: the badges then show the player's own, and the settings say
+/// why. Nothing during a run.
 /// </summary>
 internal static class Hint
 {
@@ -27,7 +28,7 @@ internal static class Hint
         var menu = _menu;
         _menu = null;
         _shown = true;
-        if (!GodotObject.IsInstanceValid(menu) || !menu.IsInsideTree() || !Settings.AnyGlobalChosen || Account.Usable)
+        if (!GodotObject.IsInstanceValid(menu) || !menu.IsInsideTree() || Settings.Source != BadgeMode.Global || Account.Usable)
             return;
         var why = Account.Status switch
         {
@@ -35,7 +36,7 @@ internal static class Hint
             Account.State.Offline => "Untapped.gg is not reachable",
             _ => "not logged in to Untapped.gg",
         };
-        Show(menu, $"Tier List Overlay: no stats ({why}), showing tiers. Log in under Settings, Tier List.");
+        Show(menu, $"Tier List Overlay: no other players' stats ({why}), showing your stats. Log in under Settings, Tier List.");
     }
 
     private static void Show(Control menu, string text)

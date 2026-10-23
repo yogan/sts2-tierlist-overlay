@@ -17,7 +17,7 @@ namespace TierListOverlay;
 /// choice, the feedback row's button) with their scripts swapped for the game's plain ones, so
 /// they look like the game's rows but no longer change the game's settings. As in the game,
 /// related rows form a group between dividers, each row explains itself in a hover tip, and
-/// rows that don't apply are greyed out.
+/// rows that don't apply are greyed out (a tickbox unticked, as it then does nothing).
 /// </summary>
 internal static class SettingsUi
 {
@@ -43,62 +43,51 @@ internal static class SettingsUi
     private sealed record Toggle(string Key, string Label, string TipTitle, Func<string> Tip, Func<bool> Applies, bool Group = false)
         : Row(Key, Label, TipTitle, Tip, Applies, Group);
 
-    // A left/right choice. An option can be unavailable for now (global stats without a login).
-    // A chosen one that is unavailable shows as `Fallback` but stays chosen. `Tip`: the option's
-    // line in the row's tip, while it is offered.
-    private sealed record Option(string Value, string Label, Func<bool>? Available = null, string? Tip = null)
-    {
-        public bool Offered => Available?.Invoke() ?? true;
-    }
+    // A left/right choice. `Tip`: the option's line in the row's tip (made when shown).
+    private sealed record Option(string Value, string Label, Func<string>? Tip = null);
 
-    // `LabelNow`: the label as things are, where it names what the row affects only sometimes.
-    private sealed record Choice(string Key, string Label, string TipTitle, Func<string> Tip, Func<bool> Applies, Option[] Options, string Fallback = "", bool Group = false,
-        Func<string>? LabelNow = null)
+    private sealed record Choice(string Key, string Label, string TipTitle, Func<string> Tip, Func<bool> Applies, Option[] Options, bool Group = false)
         : Row(Key, Label, TipTitle, Tip, Applies, Group)
     {
         public override string TipText =>
-            string.Join("\n", Options.Where(o => o.Offered && o.Tip != null).Select(o => $"[gold]{o.Label}[/gold]: {o.Tip}").Prepend(Tip()));
+            string.Join("\n", Options.Where(o => o.Tip != null).Select(o => $"[gold]{o.Label}[/gold]: {o.Tip!()}").Prepend(Tip()));
     }
 
     // The login, with a button to log in or out.
     private sealed record AccountRow(string Key, string Label, string TipTitle, Func<string> Tip, bool Group)
         : Row(Key, Label, TipTitle, Tip, () => true, Group);
 
-    private static readonly Option None = new(Settings.Value(BadgeMode.None), "None");
-    private static readonly Option Tiers = new(Settings.Value(BadgeMode.Tiers), "Tier list", Tip: "the list's rating.");
-    private static readonly Option Personal = new(Settings.Value(BadgeMode.Personal), "Personal stats",
-        Tip: "how often you took it in your own Ascension 7+ runs with this character.");
-    private static readonly Option Global = new(Settings.Value(BadgeMode.Global), "Global stats", () => Account.Usable,
-        "how often other players took it at Ascension 7+ with this character.");
-
-    private static readonly Option[] BadgeOptions = { None, Tiers, Personal, Global };
-
-    // The history keeps what you picked at an event, not what it offered. Locked options are
-    // judged from the deck and gold before the visit (Events).
-    private static readonly Option EventCounts = new(Settings.Value(BadgeMode.Personal), "Personal stats",
-        Tip: "in how many of your Ascension 7+ visits, with any character, you picked it. "
-             + "Visits where it was locked don't count.");
+    private static readonly Option[] Sources =
+    {
+        new(Settings.Value(BadgeMode.Tiers), "Tier list", () => "the author's rating."),
+        new(Settings.Value(BadgeMode.Personal), "Personal stats", () => "how often you took it in your own Ascension 7+ runs with this character."),
+        new(Settings.Value(BadgeMode.Global), "Global stats", () => "how often other players took it at Ascension 7+ with this character."
+            + (Account.Usable ? "" : " Log in below to see these. Until then the badges show your stats.")),
+    };
 
     private static readonly Row[] Rows =
     {
-        new Choice(Settings.CardsKey, "Badges on cards", "Badges on cards", () => "On cards you can pick or buy.",
-            () => true, BadgeOptions, Tiers.Value),
-        new Choice(Settings.RelicsKey, "Badges on relics", "Badges on relics", () => "On relics you can pick or buy.",
-            () => true, BadgeOptions, Tiers.Value),
-        new Choice(Settings.PotionsKey, "Badges on potions", "Badges on potions", () => "On potions you can pick or buy.",
-            () => true, BadgeOptions, Tiers.Value),
-        new Choice(Settings.EventsKey, "Badges on events", "Badges on events",
-            () => "On event options. Ancients' relics go with the relic badges.",
-            () => true, new[] { None, EventCounts }, EventCounts.Value),
-        new Choice(Settings.DeckKey, "Badges on deck screens", "Deck screens",
-            () => "The tier list's rating on the cards you have: deck view, remove, transform, enchant.",
-            () => true, new[] { None, Tiers }),
+        new Choice(Settings.BadgesKey, "Badges", "Badges",
+            () => "What the badges show on cards, relics and potions you can pick or buy. A screen without it shows none.",
+            () => true, Sources),
+        new Toggle(Settings.CardsKey, "On cards", "On cards", () => "Badges on cards, the card reward's Skip and the shop's card removal.", () => true),
+        new Toggle(Settings.RelicsKey, "On relics", "On relics", () => "Badges on relics, ancients' among them.", () => true),
+        new Toggle(Settings.PotionsKey, "On potions", "On potions", () => "Badges on potions.", () => true),
 
-        new Choice(Settings.AuthorKey, "Tier list", "Tier list",
-            () => $"Whose ratings the badges and tips show{(Settings.EventAdvice ? ", and whose event advice comes first" : "")}. "
-                  + "Jorbs rates cards only, so relics and potions keep Baalorlord's.",
+        // The history keeps what you picked at an event, not what it offered. Locked options are
+        // judged from the deck and gold before the visit (Events).
+        new Toggle(Settings.EventsKey, "Personal stats on events", "Personal stats on events",
+            () => Settings.EventsApply
+                ? "In how many of your Ascension 7+ visits, with any character, you picked the option. Visits where it was locked don't count."
+                : "Only with personal stats as the badges.",
+            () => Settings.EventsApply, Group: true),
+        new Toggle(Settings.DeckKey, "Tier badges on deck screens", "Deck screens",
+            () => "The author's rating on the cards you have: deck view, card removal, transform and enchant.", () => true),
+
+        new Choice(Settings.AuthorKey, "Author", "Author",
+            () => "Whose tiers, commentary and event advice come first. Jorbs rates cards only, so relics and potions keep Baalorlord's.",
             () => Settings.AnyTiers || Settings.EventAdvice, new[] { new Option(Settings.Baalorlord, Settings.Baalorlord), new Option(Settings.Jorbs, Settings.Jorbs) },
-            Group: true, LabelNow: () => Settings.EventAdvice ? "Tier list and event advice" : "Tier list"),
+            Group: true),
         new Toggle(Settings.CommentaryKey, "Tier list commentary in hover tips", "Commentary",
             () => "An extra hover tip on rated items with the author's tier and commentary.", () => true),
         new Toggle(Settings.StatsTipsKey, "Stats in hover tips", "Stats tips",
@@ -111,7 +100,7 @@ internal static class SettingsUi
             () => Account.Usable),
 
         new Toggle(Settings.StatsSamplesKey, "Sample sizes in stats tips", "Sample sizes",
-            () => "Below the stats, how many runs and offers they are based on.", () => Settings.StatsTips, Group: true),
+            () => "Below the stats, how many runs and offers they are based on.", () => Settings.StatsTips),
 
         new AccountRow(AccountKey, "Untapped.gg", "Untapped.gg",
             () => (Account.Usable
@@ -142,8 +131,7 @@ internal static class SettingsUi
         public NPaginator? Paginator;
         public NButton? Button;
         public bool? Enabled;
-        // A choice's options as offered now, and the one shown.
-        public Option[] Offered = Array.Empty<Option>();
+        // The option a choice shows.
         public int Index = -1;
         public string Text = "";
         public string ButtonText = "";
@@ -318,8 +306,11 @@ internal static class SettingsUi
         ShowTipOnHover(node, node, row);
         switch (row)
         {
-            case Choice:
+            case Choice choice:
                 shown.Paginator = node.GetNode<NPaginator>("Paginator");
+                var options = (List<string>)PaginatorOptionsField!.GetValue(shown.Paginator)!;
+                options.Clear();
+                options.AddRange(choice.Options.Select(o => o.Label));
                 break;
             case AccountRow:
                 shown.Button = node.GetNode<NButton>("FeedbackButton");
@@ -365,8 +356,8 @@ internal static class SettingsUi
         ShowTipOnHover(button, row, setting);
     }
 
-    private static void ShowOption(Shown shown) =>
-        ((MegaLabel)PaginatorLabelField!.GetValue(shown.Paginator)!).SetTextAutoSize(shown.Offered[shown.Index].Label);
+    private static void ShowOption(Shown shown, Choice choice) =>
+        ((MegaLabel)PaginatorLabelField!.GetValue(shown.Paginator)!).SetTextAutoSize(choice.Options[shown.Index].Label);
 
     // The game's paginator only tells subclasses about a change, so the choice is read back
     // every frame. Likewise the login, which changes in the background.
@@ -378,7 +369,6 @@ internal static class SettingsUi
         var text = shown.Row switch
         {
             AccountRow => $"{shown.Row.Label}   [color={StatusColour}]{AccountStatus()}[/color]",
-            Choice { LabelNow: { } now } => now(),
             _ => shown.Row.Label,
         };
         if (text != shown.Text)
@@ -397,6 +387,9 @@ internal static class SettingsUi
             return;
         shown.Enabled = enabled;
         shown.Label.Modulate = enabled ? Colors.White : DisabledText;
+        // A tickbox that does nothing shows unticked. Its setting stays for when it applies.
+        if (shown.Tickbox != null)
+            shown.Tickbox.IsTicked = enabled && Settings.Get(shown.Row.Key).AsBool();
         IEnumerable<NClickableControl> controls = shown.Paginator != null
             ? shown.Paginator.GetChildren().OfType<NClickableControl>()
             : new NClickableControl?[] { shown.Tickbox, shown.Button }.OfType<NClickableControl>();
@@ -409,30 +402,19 @@ internal static class SettingsUi
         }
     }
 
-    // Offers the options available now. The player paging to another saves it.
+    // Shows the saved option, which a login can change too. The player paging to another saves it.
     private static void UpdateChoice(Shown shown, Choice choice)
     {
-        var offered = choice.Options.Where(o => o.Offered).ToArray();
-        var options = (List<string>)PaginatorOptionsField!.GetValue(shown.Paginator)!;
-        if (!offered.SequenceEqual(shown.Offered))
-        {
-            shown.Offered = offered;
-            options.Clear();
-            options.AddRange(offered.Select(o => o.Label));
-            var chosen = Settings.Get(choice.Key).AsString();
-            shown.Index = Array.FindIndex(offered, o => o.Value == chosen);
-            if (shown.Index < 0)
-                shown.Index = Math.Max(0, Array.FindIndex(offered, o => o.Value == choice.Fallback));
-            PaginatorIndexField!.SetValue(shown.Paginator, shown.Index);
-            ShowOption(shown);
-            return;
-        }
         var index = (int)PaginatorIndexField!.GetValue(shown.Paginator)!;
-        if (index == shown.Index)
+        if (index != shown.Index && shown.Index >= 0)
+            Settings.Set(choice.Key, choice.Options[index].Value);
+        var chosen = Settings.Get(choice.Key).AsString();
+        var saved = Math.Max(0, Array.FindIndex(choice.Options, o => o.Value == chosen));
+        if (saved == shown.Index)
             return;
-        shown.Index = index;
-        ShowOption(shown);
-        Settings.Set(choice.Key, offered[index].Value);
+        shown.Index = saved;
+        PaginatorIndexField!.SetValue(shown.Paginator, saved);
+        ShowOption(shown, choice);
     }
 
     private static readonly Color DisabledText = new(1, 1, 1, 0.4f);
@@ -446,7 +428,7 @@ internal static class SettingsUi
         Account.State.Connected => Account.Email == "" ? "Logged in" : Account.Email,
         Account.State.Expired => "Login expired, log in again",
         Account.State.Offline => "Not reachable right now",
-        _ => Account.Problem == "" ? "Log in for global pick and win rates" : $"Login failed: {Account.Problem.Replace("[", "[lb]")}",
+        _ => Account.Problem == "" ? "Log in for other players' stats" : $"Login failed: {Account.Problem.Replace("[", "[lb]")}",
     };
 
     // The button does what the login needs next: green to log in, red to log out or cancel.

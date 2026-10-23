@@ -10,14 +10,14 @@ import time
 import urllib.error
 import urllib.request
 
-from .game import (BADGE_KEYS, GAME_LOG, MOD_DIR, CheckError, act, click, console, ensure_test_run, find_node,
+from .game import (GAME_LOG, MOD_DIR, CheckError, act, click, console, ensure_test_run, find_node,
                    hover, hover_until, inspect, leave_screens, log_since, log_length, open_ancient, open_card_reward,
                    open_shop, read_settings, restart_game, screenshot, tree, wait_for, wait_state)
 from .geometry import centre, fully_inside, share_covered
-from .settings import (account_row, close_settings, ensure_stats, open_settings, row_enabled, row_label, set_setting, setting_row,
+from .settings import (account_row, close_settings, ensure_stats, open_settings, row_enabled, set_setting, setting_row,
                        setting_tip, shown_value)
 from .tiers import scenario_deck_view
-from .verify import (ICON_TYPES, check_badges, check_badges_on_box_top, check_prices_clear, check_tooltip_layering,
+from .verify import (check_badges_on_box_top, check_prices_clear, check_tooltip_layering,
                      exhausted_relics, in_context, wrapped_lines)
 
 API = "https://api.sts2.untapped.gg"
@@ -347,8 +347,9 @@ def scenario_stats_deck_view(result, tiers):
 
 def scenario_logged_out(result, tiers):
     """Global stats chosen, then Log out in the settings: the login file goes, the choice stays
-    saved but shows as the tier list and can't be picked, badges show tiers, event options no
-    advice, and a game start without a login shows a hint. Restarts the game twice. The login comes back from a copy."""
+    saved and shown, its tip says to log in, badges show your stats (never tiers), event
+    options no advice, and a game start without a login shows a hint. Restarts the game twice.
+    The login comes back from a copy."""
     if not ACCOUNT.exists():
         raise CheckError(f"needs a login in {ACCOUNT}: log in through the mod's settings first")
     ensure_stats(True)
@@ -362,44 +363,33 @@ def scenario_logged_out(result, tiers):
         if ACCOUNT.exists():
             result.fail("Log out left account.cfg behind")
         status, action = account_row(screen)
-        if status != "Log in for global pick and win rates" or action != "Log in":
+        if status != "Log in for other players' stats" or action != "Log in":
             result.fail(f"logged out, the account row reads {status!r} with button {action!r}")
-        for key in BADGE_KEYS:
-            if shown_value(setting_row(screen, key)) != "Tier list" or read_settings()[key] != "global":
-                result.fail(f"logged out, {key} shows {shown_value(setting_row(screen, key))!r} "
-                            f"(saved {read_settings()[key]!r}), expected 'Tier list', 'global' kept")
+        if shown_value(setting_row(screen, "badges")) != "Global stats" or read_settings()["badges"] != "global":
+            result.fail(f"logged out, the badges row shows {shown_value(setting_row(screen, 'badges'))!r} "
+                        f"(saved {read_settings()['badges']!r}), expected 'Global stats', 'global' kept")
         if not row_enabled(setting_row(screen, "stats_samples")):
             result.fail("sample sizes are greyed out without a login (they apply to your own stats too)")
         if row_enabled(setting_row(screen, "event_advice")):
             result.fail("event advice is not greyed out without a login")
         elif read_settings()["event_advice"] is not True:
             result.fail("logging out changed the saved event advice setting")
-        if row_label(setting_row(screen, "author")) != "Tier list":
-            result.fail(f"logged out, the author row reads {row_label(setting_row(screen, 'author'))!r}, expected 'Tier list'")
-        tip = setting_tip("cards") or ""
-        if "Global stats" in tip or "Personal stats:" not in tip:
-            result.fail(f"logged out, the cards row's tip should explain all but global stats: {tip!r}")
+        tip = setting_tip("badges") or ""
+        if "Log in below" not in tip or "show your stats" not in tip:
+            result.fail(f"logged out, the badges row's tip does not say to log in and what shows meanwhile: {tip!r}")
         x, y, w, h = setting_row(screen, "account")["rect"]
         hover(x + w * 0.3, y + h / 2)
         time.sleep(0.8)
         result.screenshots.append(screenshot("logged_out_settings"))
-        # Paging through a badge choice never offers global stats.
-        seen = set()
-        for _ in range(4):
-            row = setting_row(tree("NSettingsScreen", 12), "cards")
-            seen.add(shown_value(row))
-            click(find_node(row, "RightArrow")["rect"])
-            time.sleep(0.6)
-        if "Global stats" in seen:
-            result.fail(f"global stats offered without a login: {sorted(seen)}")
         close_settings()
-        set_setting("cards", "tiers")
+        # Your stats instead: the nearest to other players', never tiers among them.
         view, shot = open_shop("logged_out_shop")
         result.screenshots.append(shot)
-        if any(b["kind"] == "stats" and b["visible"] for b in view["badges"]):
-            result.fail("stats badges without a login")
-        check_badges(result, view, tiers, "cards", "NMerchantInventory")
-        check_badges(result, view, tiers, "relics", "NMerchantInventory", types=ICON_TYPES)
+        shown = [b for b in view["badges"] if b["visible"] and in_context(b, "NMerchantInventory")]
+        if any(b["kind"] != "stats" for b in shown):
+            result.fail(f"logged out, tier badges among the shop's: {[(b['item_id'], b['label']) for b in shown if b['kind'] != 'stats']}")
+        else:
+            result.note(f"logged out, the shop shows {len(shown)} badges of your own stats, no tiers ✓")
         # Imported here: the advice checks build on the personal ones, which import this module.
         from .advice import BOTH, check_no_advice
         check_no_advice(result, BOTH, "without a login", "logged_out_event")
@@ -407,8 +397,8 @@ def scenario_logged_out(result, tiers):
         restart_game()
         hints = wait_for(lambda: inspect()["hints"], "the game start hint", timeout=30)
         result.note(f"hint: {hints[0]}")
-        if "not logged in" not in hints[0]:
-            result.fail(f"hint does not say the login is missing: {hints[0]!r}")
+        if "not logged in" not in hints[0] or "showing your stats" not in hints[0]:
+            result.fail(f"hint does not say the login is missing and your stats show: {hints[0]!r}")
     finally:
         shutil.move(backup, ACCOUNT)
         restart_game()
