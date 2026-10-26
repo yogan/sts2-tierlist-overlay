@@ -5,7 +5,7 @@ import json
 import time
 
 from .game import (GAME_APP, GAME_LOG, MOD_DIR, _try_call, act, call, console, enter_combat, hover, inspect,
-                   open_ancient, open_card_reward, open_shop, screenshot, state, wait_for, wait_state)
+                   open_ancient, open_card_reward, open_shop, screenshot, state, wait_for, wait_state, wheel)
 from .geometry import fully_inside
 from .verify import (BUTTON_TYPES, ICON_TYPES, check_badge_rim, check_badges, check_badges_on_border,
                      check_badges_on_box_top, check_prices_clear, check_tip, check_tooltip_layering, exhausted_relics,
@@ -53,7 +53,7 @@ def scenario_kaleidoscope(result, tiers):
         view = inspect()
         result.screenshots.append(screenshot(f"kaleidoscope{n}"))
         cards = [c for c in view["cards"] if c["on_screen"] and in_context(c, "NCardRewardSelectionScreen")]
-        if not any(tiers.rated_for(c.get("pool")) for c in cards):
+        if not any(tiers.rated_for(c.get("pool"), c["id"]) for c in cards):
             result.fail(f"no other character's card offered: {[(c['id'], c.get('pool')) for c in cards]}")
         check_badges(result, view, tiers, "cards", "NCardRewardSelectionScreen")
         for i, card in enumerate(cards):
@@ -63,6 +63,50 @@ def scenario_kaleidoscope(result, tiers):
         wait_state("rewards")
         time.sleep(1)
     console("relic remove KALEIDOSCOPE")
+
+
+def scenario_event_cards(result, tiers):
+    """Trash Heap's cards are in the game's event pool, rated in their StS1 character's list:
+    Hello World by Defect's (badge and "Rated for Defect" tip), Dual Wield by Ironclad's, the
+    test character's own (no such line)."""
+    cards = {"HELLO_WORLD": "defect", "DUAL_WIELD": "ironclad"}
+    for card in cards:
+        console(f"card {card} Deck")
+    wait_for(lambda: _try_call("NTopBarDeckButton", "OnRelease"), "the deck button")
+    time.sleep(1.5)
+    try:
+        # They are last in the deck, below the fold: scroll down until both are in full view.
+        def shown(view):
+            return all(any(c["id"] == card and in_context(c, "NDeckViewScreen") and fully_inside(c["rect"], view["window"])
+                           for c in view["cards"]) for card in cards)
+        for _ in range(10):
+            view = inspect()
+            if shown(view):
+                break
+            wheel(view["window"][0] / 2, view["window"][1] / 2)
+            time.sleep(0.4)
+        hover(10, 10)
+        time.sleep(0.5)
+        view = inspect()
+        tiers.character = view["character"]
+        result.screenshots.append(screenshot("event_cards"))
+        check_badges(result, view, tiers, "cards", "NDeckViewScreen")
+        for card_id, rater in cards.items():
+            card = next((c for c in view["cards"] if c["id"] == card_id and in_context(c, "NDeckViewScreen")
+                         and fully_inside(c["rect"], view["window"])), None)
+            if card is None:
+                result.fail(f"{card_id} is not in full view in the deck view")
+                continue
+            if card.get("pool") != "event":
+                result.fail(f"{card_id} is in the {card.get('pool')} pool, not the event pool")
+            if tiers.get(card_id, pool=card.get("pool")) is None:
+                result.fail(f"{card_id}: not in {tiers.author}'s {rater} list")
+            check_tip(result, tiers, card, f"event_cards_{card_id.lower()}")
+    finally:
+        hover(10, 10)
+        call("NTopBarDeckButton", "OnRelease")
+        for card in cards:
+            console(f"remove_card {card} Deck")
 
 
 def scenario_choose_a_card(result, tiers):
@@ -288,6 +332,7 @@ SCENARIOS = {
     "remove": scenario_remove,
     "simple_grid": scenario_simple_grid,
     "kaleidoscope": scenario_kaleidoscope,
+    "event_cards": scenario_event_cards,
     "bundle": scenario_bundle,
     "deck_view": scenario_deck_view,
     "lists": scenario_lists,

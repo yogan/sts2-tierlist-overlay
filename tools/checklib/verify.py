@@ -26,12 +26,14 @@ class TierLists:
     """The mod's cached tier lists, looked up like the mod does: the chosen author's lists,
     where the current character's list wins over the colorless list (lists rate colorless
     cards per character). Another character's card comes from that character's list (`pool`,
-    as DevTools reports it for a card). Relics and potions fall back to Baalorlord, who rates
-    them."""
+    as DevTools reports it for a card). A card in no character's pool (Trash Heap's event cards)
+    comes from the character list that rates it. Relics and potions fall back to Baalorlord, who
+    rates them."""
 
     AUTHORS = ("baalorlord", "jorbs")
 
-    LISTS_PER_AUTHOR = 6  # five characters and colorless
+    CHARACTERS = ("ironclad", "silent", "regent", "necrobinder", "defect")  # in the mod's order
+    LISTS_PER_AUTHOR = len(CHARACTERS) + 1  # and colorless
 
     def __init__(self):
         self.lists = {}
@@ -60,17 +62,21 @@ class TierLists:
 
     def get(self, item_id, default=None, card=True, pool=None):
         found = self._get(self.author, item_id)
-        if found is None and card and self.rated_for(pool):
-            found = self._get(self.author, item_id, pool)
+        if found is None and card and (owner := self.rated_for(pool, item_id)):
+            found = self._get(self.author, item_id, owner)
         if found is None and not card:
             found = self._get("baalorlord", item_id)
         return found or default
 
-    def rated_for(self, pool):
+    def rated_for(self, pool, item_id):
         """The other character whose list rates a card from `pool`, if not the player's."""
-        if pool and pool != "colorless" and pool != (self.character or "").lower() and (self.AUTHORS[0], pool) in self.lists:
-            return pool
-        return None
+        own = (self.character or "").lower()
+        if pool in self.CHARACTERS:
+            return pool if pool != own else None
+        if pool == "colorless" or self._get(self.author, item_id):
+            return None
+        rater = next((c for c in self.CHARACTERS if item_id in self.lists.get((self.author, c), {})), None)
+        return rater if rater != own else None
 
 
 @dataclass
@@ -179,7 +185,7 @@ def check_tip(result, tiers, item, shot_name=None):
     expected = tiers.get(item["id"], card=item["type"] == "NCard", pool=item.get("pool"))
     if expected is None:
         return
-    rated_for = tiers.rated_for(item.get("pool")) if item["type"] == "NCard" else None
+    rated_for = tiers.rated_for(item.get("pool"), item["id"]) if item["type"] == "NCard" else None
     # The tip normally shows within a frame or two. Allow for screens still animating in.
     mine = lambda view: [t for t in view["tier_tips"] if t["visible"] and t["item_id"] == item["id"]]
     view = hover_until(centre(item["rect"]), mine)

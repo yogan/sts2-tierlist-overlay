@@ -68,15 +68,16 @@ internal static class TierLists
     /// <summary>
     /// Looks an item up in the chosen author's lists: the current character's list wins over
     /// the colorless list. Another character's card (Kaleidoscope, Prismatic Gem, Splash, …)
-    /// comes from that character's list, marked with whose it is. Relics and potions fall back
-    /// to Baalorlord's lists, since Jorbs rates neither.
+    /// comes from that character's list, marked with whose it is. So does an event card that
+    /// a character's list rates (Trash Heap's Dual Wield, Ironclad's in StS1). Relics and
+    /// potions fall back to Baalorlord's lists, since Jorbs rates neither.
     /// </summary>
     public static bool TryGet(string? characterId, string itemId, out TierEntry entry, bool isCard = true)
     {
         var author = Settings.Author;
         if (TryGet(author, characterId, itemId, out entry))
             return true;
-        if (isCard && OwnerOf(itemId) is { } owner && owner != characterId?.ToLowerInvariant()
+        if (isCard && (OwnerOf(itemId) ?? RatingCharacter(author, itemId)) is { } owner && owner != characterId?.ToLowerInvariant()
             && TryGet(author, owner, itemId, out entry))
         {
             entry = entry with { RatedFor = owner };
@@ -96,6 +97,16 @@ internal static class TierLists
             .GroupBy(p => p.Card)
             .ToDictionary(g => g.Key, g => g.First().Owner);
         return _owners.TryGetValue(cardId, out var owner) ? owner : null;
+    }
+
+    // The character whose list rates a card that is in no character's pool, such as the event
+    // cards from Trash Heap: the lists rate them for their StS1 owner.
+    private static string? RatingCharacter(string author, string cardId)
+    {
+        var lists = _lists;
+        return Lists.Where(l => l.Author == author && l.Name != Colorless)
+            .Select(l => l.Name)
+            .FirstOrDefault(name => lists.TryGetValue(Key(author, name), out var list) && list.ContainsKey(cardId));
     }
 
     private static bool TryGet(string author, string? characterId, string itemId, out TierEntry entry)
