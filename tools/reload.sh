@@ -10,7 +10,27 @@ export DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1
 
 is_running() { pgrep -f "SlayTheSpire2.app/Contents/MacOS" >/dev/null; }
 
+# Someone may be playing: a run in profile 1 is the player's. Leave the game alone unless the
+# mods answer and say it is not so.
+nobody_playing() {
+    python3 -I - <<'EOF'
+import json, sys, urllib.request
+get = lambda path: json.load(urllib.request.urlopen(f"http://localhost:15526/api/v1/{path}", timeout=5))
+try:
+    profile = get("profiles")["current_profile_id"]
+    screen = get("singleplayer")["state_type"]
+except Exception as ex:
+    sys.exit(f"cannot tell whether someone is playing ({ex})")
+if profile == 1 and screen != "menu":
+    sys.exit(f"a run is in progress in profile {profile}")
+EOF
+}
+
 if is_running; then
+    if ! nobody_playing; then
+        echo "Not restarting the game: wait until the player is done" >&2
+        exit 2
+    fi
     osascript -e 'tell application id "com.megacrit.SlayTheSpire2" to quit' >/dev/null 2>&1 || true
     i=0
     while is_running; do
