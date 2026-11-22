@@ -34,6 +34,8 @@ fails until that constant is raised. The routine:
    it from its `main` branch (releases lag behind the game), build with
    `dotnet build -c Release -p:STS2GameDir="$HOME/Library/Application Support/Steam/steamapps/common/Slay the Spire 2"`
    and copy `STS2_MCP.dll` plus `mod_manifest.json` (as `STS2_MCP.json`) to `mods/STS2_MCP/`.
+   When `main` does not build against the game yet (a beta), its open pull requests often fix
+   that: merge them onto `main` in a local branch and build that.
 5. All green: raise `TestedGameVersion` to the new version and commit.
 
 ## Tier list data

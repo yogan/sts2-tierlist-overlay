@@ -322,6 +322,19 @@ internal static class Tips
             : $"[color={Colour((tier != null && TierColours.TryGetValue(tier, out var c) ? c : new Color("#888888")).Lightened(0.25f))}]{Badges.Percent(delta.Value, signed: true)}[/color] {label}";
 
     /// <summary>A setting's explanation, where the game shows its own settings' tips.</summary>
+    // Where the game puts a settings line's tip: GetSettingTipPosition (game v0.113 on), or a
+    // fixed offset from the line (settingTipsOffset, before).
+    private static readonly Type SettingsScreenType = typeof(MegaCrit.Sts2.Core.Nodes.Screens.Settings.NSettingsScreen);
+    private static readonly MethodInfo? SettingTipPositionMethod = SettingsScreenType.GetMethod("GetSettingTipPosition", BindingFlags.Public | BindingFlags.Static, new[] { typeof(Control) });
+    private static readonly FieldInfo? SettingTipsOffsetField = SettingsScreenType.GetField("settingTipsOffset", BindingFlags.Public | BindingFlags.Static);
+
+    private static Vector2 SettingTipPosition(Control row)
+    {
+        if (SettingTipPositionMethod?.Invoke(null, new object[] { row }) is Vector2 position)
+            return position;
+        return row.GlobalPosition + (SettingTipsOffsetField?.GetValue(null) is Vector2 offset ? offset : new Vector2(1012f, -60f));
+    }
+
     public static void ShowForSetting(Control row, string title, string text)
     {
         // The row's control can take the mouse from the row and back. One tip at a time.
@@ -331,7 +344,7 @@ internal static class Tips
             return;
         set.SetMeta(DoneMeta, true);
         AddTip(container, SettingTipGroup, row.Name, title, text);
-        set.GlobalPosition = row.GlobalPosition + MegaCrit.Sts2.Core.Nodes.Screens.Settings.NSettingsScreen.settingTipsOffset;
+        set.GlobalPosition = SettingTipPosition(row);
         // Left and up just enough to stay on screen, should a title make the tip wider or the
         // row be near the bottom. (The game's own correction moves it onto the row's controls.)
         var overflow = container.GetGlobalRect().End - row.GetViewportRect().Size + Vector2.One * ScreenMargin;
