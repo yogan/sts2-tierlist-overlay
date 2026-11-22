@@ -281,6 +281,18 @@ def ensure_test_run():
                 act("menu_select", option="continue")
             elif screen == "main" and "singleplayer" in options:
                 act("menu_select", option="singleplayer")
+            elif screen == "main" and "abandon_run" in options:
+                # A run the game cannot load, e.g. one an older game version finds saved by a
+                # newer one: it sets the file aside but still offers only to abandon it. Only
+                # the test profile's: the switch to it can take more than one request.
+                current = _request(f"{MCP}/api/v1/profiles")["current_profile_id"]
+                if current != TEST_PROFILE:
+                    raise CheckError(f"profile {current} offers only to abandon its run, refusing to touch it")
+                act("menu_select", option="abandon_run")
+                time.sleep(1.5)
+                act("menu_select", option="yes")
+            elif screen == "popup" and "dismiss" in options:  # "Corrupt Save!", see above
+                act("menu_select", option="dismiss")
             elif screen == "singleplayer":  # game mode, once the Timeline unlocks more than Standard
                 act("menu_select", option="standard")
             elif screen == "character_select":

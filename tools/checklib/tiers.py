@@ -307,9 +307,9 @@ def scenario_lists(result, tiers):
     log = [line for line in GAME_LOG.read_text(errors="replace").splitlines() if "[TierListOverlay]" in line]
     if f"[TierListOverlay] Game version {game_version}" not in log:
         result.fail(f"mod did not log game version {game_version}")
-    if any("Last tested on game" in line for line in log):
-        result.fail(f"the mod was last tested on another game version than {game_version}: "
-                    "run the routine in docs/UPDATING.md, then raise TestedGameVersion")
+    if any("Not tested on game" in line for line in log):
+        result.fail(f"the mod was not tested on game {game_version}: "
+                    "run the routine in docs/UPDATING.md, then add it to TestedGameVersions")
     stamp = (MOD_DIR / "cache" / "fetched.cfg").read_text() if (MOD_DIR / "cache" / "fetched.cfg").exists() else ""
     if f'game_version="{game_version}"' not in stamp:
         result.fail(f"cache was not fetched for {game_version}: {stamp.strip()!r}")

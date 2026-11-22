@@ -39,9 +39,10 @@ public static class TierListOverlayMod
     private static readonly HashSet<Control> Tracked = new();
     private static readonly HashSet<string> LoggedUnrated = new();
 
-    // The game version the mod was last checked against (tools/check.py, docs/UPDATING.md).
-    // Badges and tips depend on game internals that an update can change without a build error.
-    private const string TestedGameVersion = "v0.107.1";
+    // The game versions the mod was last checked against (tools/check.py, docs/UPDATING.md): the
+    // regular one and the beta. Badges and tips depend on game internals that an update can
+    // change without a build error.
+    private static readonly string[] TestedGameVersions = { "v0.111.1", "v0.114.0" };
     private static int _checkedGeneration;
 
     public static void Initialize()
@@ -53,8 +54,8 @@ public static class TierListOverlayMod
         // Lists are made per game version, so ask for the installed one ("v0.107.1").
         var gameVersion = ReleaseInfoManager.Instance.ReleaseInfo?.Version;
         GD.Print($"[TierListOverlay] Game version {gameVersion ?? "unknown"}");
-        if (gameVersion != null && gameVersion != TestedGameVersion)
-            GD.PrintErr($"[TierListOverlay] Last tested on game {TestedGameVersion}, this is {gameVersion}: run the update routine in docs/UPDATING.md");
+        if (gameVersion != null && !TestedGameVersions.Contains(gameVersion))
+            GD.PrintErr($"[TierListOverlay] Not tested on game {gameVersion} (tested: {string.Join(", ", TestedGameVersions)}): run the update routine in docs/UPDATING.md");
         TierLists.LoadInBackground(Path.Combine(modDir, "cache"), gameVersion);
         Advice.Load(Path.Combine(modDir, "cache"));
 

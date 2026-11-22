@@ -3,9 +3,10 @@
 ## After a game update
 
 Steam updates the game without asking, but the mod keeps running as long as the game still has
-what it uses. At startup the mod logs `Last tested on game vX, this is vY` when the installed
-version differs from `TestedGameVersion` (`TierListOverlayMod.cs`), and `check.py lists`
-fails until that constant is raised. The routine:
+what it uses. At startup the mod logs `Not tested on game vY` when the installed version is
+not in `TestedGameVersions` (`TierListOverlayMod.cs`), and `check.py lists` fails until it is
+added. The list holds the regular version and the beta: one build runs on both, so where they
+differ the code looks the game's member up by name and falls back. The routine:
 
 1. `tools/reload.sh` rebuilds both mods against the new `sts2.dll`. A compile error means
    the game renamed or removed a type or member the code names directly.
@@ -36,7 +37,7 @@ fails until that constant is raised. The routine:
    and copy `STS2_MCP.dll` plus `mod_manifest.json` (as `STS2_MCP.json`) to `mods/STS2_MCP/`.
    When `main` does not build against the game yet (a beta), its open pull requests often fix
    that: merge them onto `main` in a local branch and build that.
-5. All green: raise `TestedGameVersion` to the new version and commit.
+5. All green: put the new version in `TestedGameVersions` in place of the one it follows and commit.
 
 ## Tier list data
 
