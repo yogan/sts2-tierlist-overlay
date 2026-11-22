@@ -333,6 +333,12 @@ def new_test_run():
     if profiles["current_profile_id"] != TEST_PROFILE:
         raise CheckError(f"profile {profiles['current_profile_id']} is active, refusing to abandon its run")
     if state()["state_type"] != "menu":
+        # Abandoning counts a loss to the last saved room's encounter when that room is a fight,
+        # and a fight the console started has none: the game then fails before it writes the
+        # run to the history. Console rooms reach the save file only when the game saves, which
+        # a finished ancient does: end the run on one.
+        leave_screens()
+        finish_ancient()
         call("NOverlayStack", "Clear")
         wait_for(lambda: _try_call("NTopBarPauseButton", "OnRelease"), "the pause button")
         time.sleep(1.5)
@@ -427,6 +433,26 @@ def open_event(name):
     console(f"event {name}")
     wait_state("event")
     time.sleep(2.0)
+
+
+def finish_ancient():
+    """Takes an ancient's first option, with the card selection it may open, which saves the
+    run."""
+    open_ancient()
+    time.sleep(1.5)
+    act("choose_event_option", index=0)
+    time.sleep(2)
+    for _ in range(3):
+        s = state()
+        if s["state_type"] != "card_select":
+            break
+        for i in range(len(s["card_select"].get("cards", []))):
+            if state()["card_select"].get("can_confirm"):
+                break
+            act("select_card", index=i)
+        act("confirm_selection")
+        time.sleep(2)
+    time.sleep(2)  # the save is written in the background
 
 
 def open_ancient(ancient="DARV"):

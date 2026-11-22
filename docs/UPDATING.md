@@ -80,7 +80,10 @@ fails until that constant is raised. The routine:
   (`card`, `enchantment`). The gold before the visit is the floor before's `current_gold`.
   `personal_real` rewinds every real run to its first floor and fails when that doesn't give
   the starting decks, as a renamed field would.
-- Tested with `schema_version` 9 (game v0.107.1). A new schema version can rename fields.
+- Tested with `schema_version` 9 (game v0.107.1) to 12 (v0.114.0). The later ones only add
+  fields the mod doesn't read (`is_custom_game`, `blitz_merchant_choices`,
+  `is_affected_by_fur_coat`). Blitz runs (`game_mode` `blitz`) don't count, like any mode but
+  `standard`. A new schema version can rename fields.
   `personal_real` notices: it copies the active profile's history (test profile 2) into
   `test-history/`, fails when the mod skips a file, when a file has a newer schema than
   `KNOWN_SCHEMA` (`tools/checklib/personal.py`) or when no run is from the installed game

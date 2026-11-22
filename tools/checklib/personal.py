@@ -22,8 +22,8 @@ from .verify import (check_badges, check_badges_on_box_top, check_prices_clear, 
 TEST_HISTORY = MOD_DIR / "test-history"
 # The game's saves, one folder per Steam account, with profileN/ and modded/profileN/ in each.
 SAVES = Path.home() / "Library/Application Support/SlayTheSpire2/steam"
-# The run history schema_version that count_history (and History.cs) were checked against.
-KNOWN_SCHEMA = 9
+# The newest run history schema_version that count_history (and History.cs) were checked against.
+KNOWN_SCHEMA = 12
 PREFIX = {"cards": "CARD.", "relics": "RELIC.", "potions": "POTION."}
 # Per kind: the tip's line (taken, offered, share).
 PERSONAL_KINDS = {
