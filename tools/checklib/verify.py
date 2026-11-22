@@ -313,6 +313,33 @@ def check_badge_rim(result, view, shot, context_type):
     result.note(f"rim: {top:.2f} px top, {slanted:.2f} px slanted (median of {len(badges)} badges)")
 
 
+def check_badge_faces(result, view, tiers, shot, context_type):
+    """Every badge must show its face in its tier's colour, not only its text. A card node the
+    game reuses keeps its badge but loses the handler that draws the face. Sampled across the
+    badge's middle between the left tip and the text, where the face's gradient is about
+    halfway."""
+    tiers.character = view["character"]
+    image = Image.open(shot).convert("RGB")
+    checked = 0
+    for badge in view["badges"]:
+        if not (badge["visible"] and in_context(badge, context_type) and fully_inside(badge["rect"], view["window"])):
+            continue
+        pool = next((c.get("pool") for c in view["cards"] if c["id"] == badge["item_id"]), None)
+        tier = tiers.get(badge["item_id"], pool=pool)
+        if tier is None:
+            continue
+        # The middle of the face's gradient from Lightened(0.22) to Darkened(0.12) (Badges.cs).
+        face = tuple(c * 0.83 + 255 * 0.11 for c in hex_rgb(tier.color))
+        x, y, w, h = badge["rect"]
+        region = (x + h * 0.4, y + h * 0.4, x + h * 0.65, y + h * 0.6)
+        checked += 1
+        share = colour_share(image, region, face)
+        if share < 0.5:
+            result.fail(f"{badge['item_id']}: badge face not drawn ({share:.0%} in its colour at "
+                        f"{[round(v) for v in region]})")
+    result.note(f"badge faces: {checked} checked")
+
+
 def check_badges_on_box_top(result, view, shot, boxes=None):
     """An ancient option badge's pointed ends (its vertical middle) must sit on the option
     box's visible top edge: where the dark box starts beside the badge. `boxes`: the option

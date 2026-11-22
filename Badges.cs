@@ -117,6 +117,7 @@ internal static class Badges
         {
             if (content != null && existing.GetMeta("key", "").AsString() == Key(content))
             {
+                Reconnect(existing);
                 if (StatsFor(existing) != content.Stats)
                     SetStats(existing, content.Stats);
                 Place(item, existing, bounds, placement);
@@ -198,8 +199,25 @@ internal static class Badges
 
         var rim = Mathf.Max(1.5f, fontSize / 10f);
         // A container draws itself before its children, so the hexagon ends up behind the text.
-        badge.Draw += () => DrawBadge(badge, content.Colour, rim);
+        var draw = Callable.From(() => DrawBadge(badge, content.Colour, rim));
+        DrawOf.Add(badge, new DrawHandler(draw));
+        badge.Connect(CanvasItem.SignalName.Draw, draw);
         return badge;
+    }
+
+    // Each badge's draw handler. The game pools card nodes, and when a card goes back to the pool
+    // it disconnects every signal of the card and its children, the badge's too. A card that
+    // comes back for the same card keeps its badge, which then needs its handler again.
+    private sealed record DrawHandler(Callable Callable);
+
+    private static readonly System.Runtime.CompilerServices.ConditionalWeakTable<Control, DrawHandler> DrawOf = new();
+
+    private static void Reconnect(Control badge)
+    {
+        if (!DrawOf.TryGetValue(badge, out var handler) || badge.IsConnected(CanvasItem.SignalName.Draw, handler.Callable))
+            return;
+        badge.Connect(CanvasItem.SignalName.Draw, handler.Callable);
+        badge.QueueRedraw();
     }
 
     private static Label Text(string text, Font? font, int size, Color colour, Color? textColour)

@@ -7,7 +7,7 @@ import time
 from .game import (GAME_APP, GAME_LOG, MOD_DIR, _try_call, act, call, console, enter_combat, hover, inspect,
                    open_ancient, open_card_reward, open_shop, screenshot, state, wait_for, wait_state, wheel)
 from .geometry import fully_inside
-from .verify import (BUTTON_TYPES, ICON_TYPES, check_badge_rim, check_badges, check_badges_on_border,
+from .verify import (BUTTON_TYPES, ICON_TYPES, check_badge_faces, check_badge_rim, check_badges, check_badges_on_border,
                      check_badges_on_box_top, check_prices_clear, check_tip, check_tooltip_layering, exhausted_relics,
                      in_context, tier_label)
 
@@ -199,8 +199,10 @@ def grid_from_relic(result, tiers, relic, context, picks, name):
     wait_state("card_select")
     time.sleep(1.5)
     view = inspect()
-    result.screenshots.append(screenshot(name))
+    shot = screenshot(name)
+    result.screenshots.append(shot)
     check_badges(result, view, tiers, "cards", context)
+    check_badge_faces(result, view, tiers, shot, context)
     for i in range(picks):
         act("select_card", index=i)
     act("confirm_selection")
@@ -255,11 +257,16 @@ def scenario_upgrade(result, tiers):
 
 
 def scenario_deck_view(result, tiers):
-    """Deck view from the top bar."""
+    """Deck view from the top bar, opened a second time: the game then shows the cards on
+    reused card nodes that still carry their badges."""
     # The run's top bar may still be loading, and the deck may still be open from a failed run.
     if not any(in_context(c, "NDeckViewScreen") for c in inspect()["cards"]):
         wait_for(lambda: _try_call("NTopBarDeckButton", "OnRelease"), "the deck button")
         time.sleep(1.5)
+    call("NTopBarDeckButton", "OnRelease")
+    time.sleep(1.5)
+    call("NTopBarDeckButton", "OnRelease")
+    time.sleep(1.5)
     try:
         hover(10, 10)
         time.sleep(0.5)
@@ -269,6 +276,7 @@ def scenario_deck_view(result, tiers):
         check_badges(result, view, tiers, "cards", "NDeckViewScreen")
         check_badges_on_border(result, view, shot, "NDeckViewScreen")
         check_badge_rim(result, view, shot, "NDeckViewScreen")
+        check_badge_faces(result, view, tiers, shot, "NDeckViewScreen")
     finally:
         call("NTopBarDeckButton", "OnRelease")
 
