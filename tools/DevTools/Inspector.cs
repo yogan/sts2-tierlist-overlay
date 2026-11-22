@@ -246,15 +246,27 @@ internal static class Inspector
     }
 
     /// <summary>Finds the first node in the tree whose type has the given name.</summary>
+    // The first node of the type or a type derived from it (NMerchantRoom finds the game's
+    // NStandardMerchantRoom, which v0.113 split off for its Blitz mode).
     public static Node? FindByType(string typeName)
     {
         Node? found = null;
         Walk(((SceneTree)Engine.GetMainLoop()).Root, node =>
         {
-            if (found == null && node.GetType().Name == typeName)
+            if (found == null && IsOfType(node.GetType(), typeName))
                 found = node;
         });
         return found;
+    }
+
+    private static bool IsOfType(System.Type? type, string typeName)
+    {
+        for (; type != null; type = type.BaseType)
+        {
+            if (type.Name == typeName)
+                return true;
+        }
+        return false;
     }
 
     // Game node types of the ancestors, innermost first, e.g. ["NCardRow", "NCardRewardSelectionScreen", ...],

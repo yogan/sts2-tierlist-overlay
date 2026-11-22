@@ -31,7 +31,7 @@ namespace DevTools;
 ///   POST /mute?on=true                    mute the game (on=false: back to the player's volume),
 ///                                         without changing the saved setting
 ///   POST /key?name=Escape                 press and release a key (Godot Key name)
-///   POST /call?type=NMerchantRoom&amp;method=OpenInventory   call a method on the first node of a type
+///   POST /call?type=NMerchantRoom&amp;method=OpenInventory   call a method on the first node of a type (or one derived from it)
 ///
 /// Mouse coordinates are window pixels, which are also the pixels of a screenshot, so a
 /// position can be read straight off a screenshot. POST requests need a body (curl -d '').

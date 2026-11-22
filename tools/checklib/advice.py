@@ -57,7 +57,9 @@ def check_advice(result, event, author, advice, shot_name):
         if i == 0:
             result.screenshots.append(screenshot(shot_name))
         if len(tips) != 1:
-            result.fail(f"{event} option {i}: {len(tips)} advice tips, expected one")
+            shown = [t.get("title") for t in view["hover_tips"] if t["visible"]]
+            result.fail(f"{event} option {i}: {len(tips)} advice tips, expected one (tips shown: {shown})")
+            result.screenshots.append(screenshot(f"{shot_name}_option{i}_failed"))
             continue
         tip = tips[0]
         others = [t for t in view["stats_tips"] if t["visible"]]
